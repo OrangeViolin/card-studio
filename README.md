@@ -1,8 +1,8 @@
 # card-studio · 卡片书斋
 
-> 把你读过的金句、写过的段落、看过的 PDF，变成可浏览的知识卡片，和可练习的打字素材。
+> 把你读过的书、存过的文档、抓到的网页，变成可浏览的知识卡片集。
 
-一个本地优先的知识卡片工作站。上传一本书（PDF / Markdown / TXT / ZIP），用 Claude CLI 把内容解析成七种结构化卡片（术语 / 人物 / 反常识 / 金句 / 行动 / 技巧 / 任意）；或者把卡片库直接接入打字练习，敲字即复习。
+一个本地优先的知识卡片书斋。上传一本书（PDF / Markdown / TXT / ZIP），用 Claude CLI 把内容解析成七种结构化卡片（术语 / 人物 / 反常识 / 金句 / 行动 / 技巧 / 任意），摆进你的书架，翻阅、检索、收藏。
 
 ---
 
@@ -13,7 +13,6 @@
 | 书架视图 | 一本书一个格子，封面 + 标题 + 作者 + 卡片数 |
 | 上传解析 | PDF（走 pdf2x.cn 或自建 parse 服务）/ Markdown / TXT / ZIP 拖拽或点选上传 |
 | 七种卡片 | term · people · counter · quote · action · tech · wild，Claude CLI 生成 |
-| 打字练习 | 任意卡片里的 quote 字段可进入打字模式（来自 paper-key 的 typing 引擎） |
 | 本地数据 | 全部写 `./data`，不上云，不打点 |
 
 ---
@@ -57,7 +56,7 @@ npm start
 │  public/*.html   │                 │  server.js :3013   │
 └──────────────────┘                 └─────────┬──────────┘
         ▲                                      │
-        │ typing / reading                     ├──▶ PDF Parse Service
+        │ read / browse                        ├──▶ PDF Parse Service
         │                                      │    (pdf2x.cn / 自建 7004)
         │                                      │
         │                                      ├──▶ Claude CLI
@@ -67,7 +66,7 @@ npm start
         │                                           ├── book.json
         │                                           └── cards.json
         │
-        └── public/typing/typing.js ◀── cards.json 的 quote 字段
+        └── 翻阅 / 检索 / 收藏
 ```
 
 ---
@@ -110,7 +109,7 @@ data/
 | term | 术语卡 | 专有名词、核心概念 |
 | people | 人名卡 | 书中出现的关键人物 |
 | counter | 反常识卡 | 挑战直觉的结论 |
-| quote | 金句卡 | 可直接摘抄的句子，**打字模式的素材源** |
+| quote | 金句卡 | 可直接摘抄的句子 |
 | action | 行动卡 | 可以照做的具体步骤 |
 | tech | 技巧卡 | 方法论、套路 |
 | wild | 任意卡 | 其他不好分类的 |
@@ -130,18 +129,6 @@ data/
 
 ---
 
-## 打字模式 / Typing Mode
-
-卡片库里所有 `type === "quote"` 的卡片，都会自动进入 `/typing` 页面的打字素材池。引擎来自 [paper-key](https://github.com/OrangeViolin/paper-key) 的 `typing.js`（修改版），原版在 paper-key 里保持不动。
-
-特性：
-
-- 支持中英文混排
-- 本地存储进度（`localStorage` key `paperkey.quotes`）
-- 直接从 `cards.json` 导入，也支持拖入 ZIP / JSON / TXT
-
----
-
 ## 路线图 / Roadmap
 
 - [x] 书架 + 卡片渲染
@@ -150,14 +137,13 @@ data/
 - [ ] 剪贴板捕获（选中即入库）
 - [ ] 订阅远端 cards.json
 - [ ] 文件夹拖入（批量）
-- [ ] 打字模式 UI 接入到书架
+- [ ] 卡片检索 / 标签筛选 / 收藏
 
 ---
 
 ## 致谢 / Credits
 
 - **card-library** — 本项目前端 / 后端基础代码的起点
-- **paper-key** — typing.js 打字引擎
 - **pdf2x.cn / insightdoc.memect.cn** — PDF 解析服务
 - **Claude Code** — 深度参与了本项目的架构和代码
 
@@ -167,9 +153,6 @@ data/
 
 **GPL-3.0-or-later**
 
-因为 typing.js 继承自 paper-key（GPL-3.0），本项目整体走 GPL-3.0。
-
 - 你可以自由使用、修改、再分发（含商业用途）
 - 衍生作品必须也采用 GPL-3.0 开源
 - 分发二进制时需要同时提供源码
-- 与 App Store 分发条款不兼容
