@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卡片书斋 · 浏览</title>
+<style>
+/* ===== CSS Variables ===== */
+:root {
+  --bg: #f8fafc; --bg-secondary: #f1f5f9; --bg-card: #ffffff;
+  --text: #0f172a; --text-secondary: #475569; --text-muted: #94a3b8;
+  --border: #e2e8f0; --border-light: #f1f5f9;
+  --accent: #6366f1; --accent-light: #818cf8; --accent-bg: rgba(99,102,241,.08);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.06);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.06);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.08);
+  --glass: rgba(255,255,255,.7); --glass-border: rgba(255,255,255,.5);
+  --radius: 16px; --radius-sm: 10px; --radius-xs: 6px;
+  --counter: #ef4444; --counter-bg: rgba(239,68,68,.08);
+  --people:  #8b5cf6; --people-bg:  rgba(139,92,246,.08);
+  --term:    #3b82f6; --term-bg:    rgba(59,130,246,.08);
+  --quote:   #f59e0b; --quote-bg:   rgba(245,158,11,.08);
+  --action:  #10b981; --action-bg:  rgba(16,185,129,.08);
+  --tech:    #06b6d4; --tech-bg:    rgba(6,182,212,.08);
+  --wild:    #64748b; --wild-bg:    rgba(100,116,139,.08);
+}
+html.dark {
+  --bg: #0c0f1a; --bg-secondary: #131627; --bg-card: #1a1e35;
+  --text: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+  --border: #1e2744; --border-light: #232a45;
+  --accent: #818cf8; --accent-light: #a5b4fc; --accent-bg: rgba(129,140,248,.1);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.3);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,.4);
+  --glass: rgba(26,30,53,.6); --glass-border: rgba(255,255,255,.06);
+  --counter-bg: rgba(239,68,68,.12);
+  --people-bg:  rgba(139,92,246,.12);
+  --term-bg:    rgba(59,130,246,.12);
+  --quote-bg:   rgba(245,158,11,.12);
+  --action-bg:  rgba(16,185,129,.12);
+  --tech-bg:    rgba(6,182,212,.12);
+  --wild-bg:    rgba(100,116,139,.12);
+}
+html.cream {
+  --bg: #FBF7E9; --bg-secondary: #f5eedc; --bg-card: #fefcf6;
+  --text: #4a3a28; --text-secondary: #7a6a50; --text-muted: #a89878;
+  --border: #e0d0b2; --border-light: #eae0c8;
+  --accent: #E8B84B; --accent-light: #F4DFA0; --accent-bg: rgba(232,184,75,.1);
+  --shadow-sm: 2px 2px 0 rgba(140,120,90,.08);
+  --shadow-md: 3px 3px 0 rgba(140,120,90,.12);
+  --shadow-lg: 6px 6px 0 rgba(140,120,90,.2), 0 8px 24px rgba(120,90,50,.08);
+  --glass: rgba(251,247,233,.75); --glass-border: rgba(232,184,75,.2);
+}
+
+*,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+  background: var(--bg); color: var(--text);
+  line-height: 1.6; transition: background .3s, color .3s;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== Top actions ===== */
+.back-btn, .theme-toggle, .action-chip {
+  height: 40px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--glass);
+  backdrop-filter: blur(12px);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: all .2s; color: var(--text-secondary);
+  font-family: inherit;
+}
+.back-btn { position: fixed; top: 16px; left: 16px; z-index: 200; padding: 0 14px; font-size: 13px; gap: 4px; }
+.top-actions {
+  position: fixed; top: 16px; right: 16px; z-index: 200;
+  display: flex; gap: 8px;
+}
+.theme-toggle { width: 40px; font-size: 18px; }
+.action-chip { padding: 0 14px; font-size: 13px; gap: 4px; font-weight: 500; }
+.action-chip:disabled { opacity: .45; cursor: not-allowed; }
+.back-btn:hover, .theme-toggle:hover, .action-chip:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+}
+
+.extend-bar {
+  position: fixed; top: 68px; right: 16px; z-index: 199;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 14px;
+  background: var(--accent-bg); color: var(--accent);
+  border: 1px solid var(--accent);
+  font-size: 13px; box-shadow: var(--shadow-lg);
+  max-width: 360px;
+}
+.extend-bar.hidden { display: none; }
+.extend-bar .spin { display: inline-block; animation: spin 1.2s linear infinite; }
+.extend-bar.done { background: #DCFCE7; color: #15803D; border-color: #22C55E; }
+.extend-bar.error { background: #FEE2E2; color: #B91C1C; border-color: #EF4444; }
+.extend-close {
+  border: none; background: transparent; cursor: pointer;
+  color: inherit; font-size: 18px; line-height: 1; padding: 0 2px;
+  opacity: .6;
+}
+.extend-close:hover { opacity: 1; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Hero ===== */
+.hero {
+  position: relative; overflow: hidden;
+  padding: 80px 24px 56px; text-align: center;
+}
+.hero::before {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99,102,241,.14) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 50% at 80% 80%, rgba(139,92,246,.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 50% at 20% 80%, rgba(59,130,246,.06) 0%, transparent 60%);
+  pointer-events: none;
+}
+.hero-inner { position: relative; z-index: 1; max-width: 680px; margin: 0 auto; }
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-bg); color: var(--accent);
+  font-size: 12px; font-weight: 600; letter-spacing: .5px;
+  padding: 6px 14px; border-radius: 20px; border: 1px solid var(--glass-border);
+  margin-bottom: 20px;
+}
+.hero-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.hero h1 {
+  font-size: clamp(26px, 4.5vw, 40px); font-weight: 800;
+  letter-spacing: -.02em; line-height: 1.15; margin-bottom: 10px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero .subtitle {
+  font-size: 15px; color: var(--text-secondary); max-width: 520px; margin: 0 auto 28px;
+  line-height: 1.7;
+}
+.stats-row { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.stat-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--glass); backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm); padding: 9px 16px;
+  font-size: 12px; color: var(--text-secondary);
+  transition: transform .2s;
+}
+.stat-chip:hover { transform: translateY(-1px); }
+.stat-chip strong {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Toolbar ===== */
+.toolbar {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--glass); backdrop-filter: blur(20px) saturate(1.4);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  transition: background .3s;
+}
+.toolbar-inner {
+  max-width: 1200px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.toolbar-inner::-webkit-scrollbar { display: none; }
+.filter-pill {
+  flex-shrink: 0; border: none; border-radius: 20px;
+  padding: 7px 14px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .2s;
+  background: transparent; color: var(--text-secondary);
+  white-space: nowrap; font-family: inherit;
+}
+.filter-pill:hover { background: var(--accent-bg); color: var(--accent); }
+.filter-pill.active {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 2px 8px rgba(99,102,241,.3);
+}
+.filter-pill .count {
+  display: inline-block; margin-left: 4px;
+  font-size: 11px; opacity: .7;
+}
+.search-box { flex-shrink: 0; margin-left: auto; position: relative; }
+.search-box input {
+  width: 200px; padding: 7px 12px 7px 32px;
+  border: 1px solid var(--border); border-radius: 20px;
+  background: var(--bg); color: var(--text);
+  font-size: 13px; outline: none; transition: all .2s;
+  font-family: inherit;
+}
+.search-box input:focus { border-color: var(--accent); width: 260px; }
+.search-box::before {
+  content: '🔍'; position: absolute; left: 10px; top: 50%;
+  transform: translateY(-50%); font-size: 12px; opacity: .5;
+  pointer-events: none;
+}
+
+/* ===== Grid ===== */
+.grid-container { max-width: 1200px; margin: 0 auto; padding: 24px 20px 80px; }
+.section-header {
+  display: flex; align-items: center; gap: 10px;
+  margin: 32px 0 18px; padding-left: 4px;
+}
+.section-header .icon { font-size: 22px; }
+.section-header h2 { font-size: 17px; font-weight: 700; color: var(--text); }
+.section-header .dash { font-size: 13px; color: var(--text-muted); font-weight: 400; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* ===== Card ===== */
+.card {
+  position: relative; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 22px; transition: all .25s cubic-bezier(.4,0,.2,1);
+  overflow: hidden;
+}
+.card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  opacity: 0; transition: opacity .25s;
+}
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--border-light);
+}
+.card:hover::before { opacity: 1; }
+.card.counter::before { background: linear-gradient(90deg, var(--counter), #f97316); }
+.card.people::before  { background: linear-gradient(90deg, var(--people), #6366f1); }
+.card.term::before    { background: linear-gradient(90deg, var(--term), #06b6d4); }
+.card.quote::before   { background: linear-gradient(90deg, var(--quote), #f59e0b); }
+.card.action::before  { background: linear-gradient(90deg, var(--action), #34d399); }
+.card.tech::before    { background: linear-gradient(90deg, var(--tech), #22d3ee); }
+.card.wild::before    { background: linear-gradient(90deg, var(--wild), #94a3b8); }
+
+.card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.card-icon {
+  width: 36px; height: 36px; border-radius: var(--radius-xs);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.card.counter .card-icon { background: var(--counter-bg); }
+.card.people .card-icon  { background: var(--people-bg); }
+.card.term .card-icon    { background: var(--term-bg); }
+.card.quote .card-icon   { background: var(--quote-bg); }
+.card.action .card-icon  { background: var(--action-bg); }
+.card.tech .card-icon    { background: var(--tech-bg); }
+.card.wild .card-icon    { background: var(--wild-bg); }
+.card-tag {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .8px;
+}
+.card.counter .card-tag { color: var(--counter); }
+.card.people .card-tag  { color: var(--people); }
+.card.term .card-tag    { color: var(--term); }
+.card.quote .card-tag   { color: var(--quote); }
+.card.action .card-tag  { color: var(--action); }
+.card.tech .card-tag    { color: var(--tech); }
+.card.wild .card-tag    { color: var(--wild); }
+.card-num {
+  margin-left: auto; font-size: 11px; font-weight: 600;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+
+.card h3 {
+  font-size: 16px; font-weight: 700; line-height: 1.4;
+  margin-bottom: 12px; color: var(--text);
+}
+.field {
+  margin-bottom: 8px; font-size: 13px; line-height: 1.65; color: var(--text-secondary);
+}
+.field-label { font-weight: 600; color: var(--text); margin-right: 2px; }
+.card-footer {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+  font-size: 11px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px;
+}
+
+.empty-state {
+  grid-column: 1 / -1; text-align: center; padding: 60px 20px;
+  color: var(--text-muted);
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 12px; opacity: .5; }
+
+.page-footer {
+  text-align: center; padding: 32px 20px;
+  font-size: 12px; color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 768px) {
+  .hero { padding: 56px 20px 40px; }
+  .card-grid { grid-template-columns: 1fr; }
+  .search-box input { width: 120px; }
+  .search-box input:focus { width: 160px; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.card { animation: fadeUp .4s ease both; }
+.card.highlight {
+  box-shadow: 0 0 0 3px var(--accent), var(--shadow-lg);
+  transform: translateY(-3px);
+}
+@keyframes cardPop {
+  0%,100% { box-shadow: 0 0 0 3px var(--accent), var(--shadow-lg); }
+  50% { box-shadow: 0 0 0 6px var(--accent-bg), var(--shadow-lg); }
+}
+</style>
+</head>
+<body>
+
+<button class="back-btn" onclick="location.href='index.html'">← 书架</button>
+<div class="top-actions">
+  <button class="action-chip" id="extendBtn" title="让 CC 再生成更多卡片">＋ 补卡</button>
+  <button class="action-chip" id="graphBtn" title="查看卡片关联图谱">🕸 图谱</button>
+  <button class="theme-toggle" id="themeBtn" title="切换主题">🌙</button>
+</div>
+
+<!-- 补卡进度条 -->
+<div id="extendBar" class="extend-bar hidden">
+  <span class="spin">⟳</span>
+  <span id="extendMsg">CC 正在补卡…</span>
+  <button class="extend-close" id="extendClose" title="关闭">×</button>
+</div>
+
+<!-- 隐藏：补源材料 file input -->
+<input type="file" id="sourceFileInput" accept=".zip,.md,.txt" style="display:none">
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge"><span class="dot"></span> 知识卡片</div>
+    <h1 id="bookTitle">加载中…</h1>
+    <p class="subtitle" id="bookSubtitle"></p>
+    <div class="stats-row" id="statsRow"></div>
+  </div>
+</section>
+
+<div class="toolbar">
+  <div class="toolbar-inner" id="toolbarInner"></div>
+</div>
+
+<div class="grid-container" id="container"></div>
+
+<footer class="page-footer">
+  生成于 <a href="index.html" style="color:var(--accent);text-decoration:none">卡片书斋</a>
+</footer>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+// ===== 主题（cream → dark → light → ...） =====
+const THEMES = ['cream', 'dark', 'light'];
+const THEME_ICONS = { cream: '🌼', dark: '🌙', light: '☀️' };
+function getTheme() { return localStorage.getItem('cs.book-theme') || 'cream'; }
+function applyTheme(t) {
+  document.documentElement.classList.remove('dark', 'cream');
+  if (t === 'dark') document.documentElement.classList.add('dark');
+  if (t === 'cream') document.documentElement.classList.add('cream');
+  $('#themeBtn').textContent = THEME_ICONS[t] || '🌙';
+  localStorage.setItem('cs.book-theme', t);
+}
+applyTheme(getTheme());
+$('#themeBtn').addEventListener('click', () => {
+  const cur = getTheme();
+  applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+});
+
+// ===== 数据 =====
+const TYPE_META = {
+  term:    { emoji: '📘', label: '术语', cnLabel: '术语卡' },
+  people:  { emoji: '👤', label: '人名', cnLabel: '人名卡' },
+  counter: { emoji: '💥', label: '反常识', cnLabel: '反常识卡' },
+  quote:   { emoji: '✨', label: '金句', cnLabel: '金句卡' },
+  action:  { emoji: '🎯', label: '行动', cnLabel: '行动卡' },
+  tech:    { emoji: '🔧', label: '技巧', cnLabel: '技巧卡' },
+  wild:    { emoji: '🃏', label: '任意', cnLabel: '任意卡' },
+};
+
+const params = new URLSearchParams(location.search);
+const bookId = params.get('id');
+
+let state = { book: null, cards: [], activeFilter: 'all', keyword: '' };
+
+async function loadBook() {
+  if (!bookId) { $('#bookTitle').textContent = '缺少书籍 ID'; return; }
+  const [bookRes, cardsRes] = await Promise.all([
+    fetch(`/api/books/${encodeURIComponent(bookId)}`),
+    fetch(`/api/books/${encodeURIComponent(bookId)}/cards`),
+  ]);
+  if (!bookRes.ok) { $('#bookTitle').textContent = '书不存在'; return; }
+  state.book = await bookRes.json();
+  state.cards = await cardsRes.json();
+  document.title = `${state.book.title} · 卡片书斋`;
+  renderHero();
+  renderToolbar();
+  renderGrid();
+}
+
+function renderHero() {
+  const b = state.book;
+  $('#bookTitle').textContent = b.title;
+  $('#bookSubtitle').textContent = b.subtitle || b.description || (b.author ? `— ${b.author} ——` : '');
+
+  // 统计：按类型计数，展示前 3 个非零 + 总数
+  const counts = countByType(state.cards);
+  const statChips = [{ label: '共', count: state.cards.length }];
+  Object.entries(counts).forEach(([t, n]) => {
+    if (n > 0) statChips.push({ label: TYPE_META[t].label, count: n });
+  });
+  $('#statsRow').innerHTML = statChips.slice(0, 6).map(c =>
+    `<div class="stat-chip"><strong>${c.count}</strong> ${escapeHtml(c.label)}</div>`
+  ).join('');
+}
+
+function countByType(cards) {
+  const counts = Object.fromEntries(Object.keys(TYPE_META).map(k => [k, 0]));
+  cards.forEach(c => { if (counts[c.type] !== undefined) counts[c.type]++; });
+  return counts;
+}
+
+function renderToolbar() {
+  const counts = countByType(state.cards);
+  const pills = [{ key: 'all', label: '全部', count: state.cards.length }];
+  Object.entries(TYPE_META).forEach(([t, meta]) => {
+    if (counts[t] > 0) pills.push({ key: t, label: `${meta.emoji} ${meta.label}`, count: counts[t] });
+  });
+
+  $('#toolbarInner').innerHTML = pills.map(p => `
+    <button class="filter-pill ${state.activeFilter === p.key ? 'active' : ''}" data-filter="${p.key}">
+      ${escapeHtml(p.label)}<span class="count">${p.count}</span>
+    </button>
+  `).join('') + `
+    <div class="search-box">
+      <input type="search" id="searchInput" placeholder="搜索卡片…" value="${escapeHtml(state.keyword)}">
+    </div>
+  `;
+
+  $$('.filter-pill').forEach(btn => btn.addEventListener('click', () => {
+    state.activeFilter = btn.dataset.filter;
+    renderToolbar(); renderGrid();
+  }));
+  const si = $('#searchInput');
+  si.addEventListener('input', (e) => { state.keyword = e.target.value.trim(); renderGrid(); });
+  // keep focus after rerender
+  if (document.activeElement && document.activeElement.id === 'searchInput') si.focus();
+}
+
+function renderGrid() {
+  const kw = state.keyword.toLowerCase();
+  const filter = state.activeFilter;
+  const visible = state.cards.filter(c => {
+    if (filter !== 'all' && c.type !== filter) return false;
+    if (!kw) return true;
+    const hay = [
+      c.title,
+      Object.values(c.fields || {}).join(' '),
+      c.source,
+      (c.tags || []).join(' '),
+    ].join(' ').toLowerCase();
+    return hay.includes(kw);
+  });
+
+  const container = $('#container');
+  if (!visible.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">🔍</div>
+        <p>没有匹配的卡片</p>
+      </div>
+    `;
+    return;
+  }
+
+  // 按类型分组（遵循固定顺序）
+  const order = ['counter', 'people', 'term', 'quote', 'action', 'tech', 'wild'];
+  const groups = {};
+  visible.forEach(c => { (groups[c.type] = groups[c.type] || []).push(c); });
+
+  let html = '';
+  order.forEach(t => {
+    if (!groups[t]) return;
+    const meta = TYPE_META[t];
+    html += `
+      <div class="section-header">
+        <span class="icon">${meta.emoji}</span>
+        <h2>${meta.cnLabel}</h2>
+        <span class="dash">— ${groups[t].length}</span>
+      </div>
+      <div class="card-grid">${groups[t].map((c, i) => renderCard(c, t, i + 1)).join('')}</div>
+    `;
+  });
+  container.innerHTML = html;
+}
+
+function renderCard(card, type, num) {
+  const meta = TYPE_META[type];
+  const fieldsHtml = Object.entries(card.fields || {}).map(([k, v]) =>
+    `<div class="field"><span class="field-label">${escapeHtml(k)}：</span>${escapeHtml(v)}</div>`
+  ).join('');
+
+  const footer = card.source
+    ? `<div class="card-footer">📖 ${escapeHtml(card.source)}</div>`
+    : '';
+
+  return `
+    <div class="card ${type}" id="card-${encodeURIComponent(card.id)}">
+      <div class="card-top">
+        <div class="card-icon">${meta.emoji}</div>
+        <span class="card-tag">${meta.cnLabel}</span>
+        <span class="card-num">#${num.toString().padStart(2, '0')}</span>
+      </div>
+      <h3>${escapeHtml(card.title)}</h3>
+      ${fieldsHtml}
+      ${footer}
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ===== 补卡 =====
+const extendBar = $('#extendBar');
+const extendMsg = $('#extendMsg');
+const extendBtn = $('#extendBtn');
+$('#extendClose').addEventListener('click', () => {
+  extendBar.classList.add('hidden');
+  extendBar.classList.remove('done', 'error');
+});
+
+async function requestExtend(count) {
+  const res = await fetch(`/api/books/${encodeURIComponent(bookId)}/extend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count }),
+  });
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function pickSourceFile() {
+  return new Promise(resolve => {
+    const fi = $('#sourceFileInput');
+    fi.value = '';
+    const onChange = () => {
+      fi.removeEventListener('change', onChange);
+      resolve(fi.files[0] || null);
+    };
+    fi.addEventListener('change', onChange);
+    fi.click();
+  });
+}
+
+async function uploadSource(file) {
+  const fd = new FormData();
+  fd.append('sourceFile', file);
+  const res = await fetch(`/api/books/${encodeURIComponent(bookId)}/source`, {
+    method: 'POST',
+    body: fd,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(`${data.error || '上传失败'}${data.detail ? ' — ' + data.detail : ''}`);
+  return data;
+}
+
+extendBtn.addEventListener('click', async () => {
+  const input = prompt('再生成多少张新卡片？（1-30）', '10');
+  if (input === null) return;
+  const count = Math.max(1, Math.min(30, parseInt(input, 10) || 10));
+  extendBtn.disabled = true;
+  showExtend('info', `CC 正在补 ${count} 张新卡片…`);
+  try {
+    let r = await requestExtend(count);
+    if (!r.ok && r.data.error === 'no_source') {
+      showExtend('info', '这本书没有源材料，请选择原始 .zip / .md / .txt 上传…');
+      const file = await pickSourceFile();
+      if (!file) { showExtend('error', '❌ 已取消'); return; }
+      showExtend('info', `📤 上传源材料中（${file.name}）…`);
+      const info = await uploadSource(file);
+      showExtend('info', `✓ 源材料已保存（${Math.round(info.bytes / 1024)} KB），开始补卡…`);
+      r = await requestExtend(count);
+    }
+    if (!r.ok) throw new Error(`${r.data.error || '失败'}${r.data.detail ? ' — ' + r.data.detail : ''}`);
+    await pollExtendJob(r.data.jobId);
+  } catch (e) {
+    showExtend('error', '❌ ' + e.message);
+  } finally {
+    extendBtn.disabled = false;
+  }
+});
+
+async function pollExtendJob(jobId) {
+  const t0 = Date.now();
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    let job;
+    try {
+      const res = await fetch(`/api/books/jobs/${jobId}`);
+      job = await res.json();
+    } catch { continue; }
+    const sec = Math.round((Date.now() - t0) / 1000);
+    if (job.status === 'done') {
+      showExtend('done', `✅ 补卡完成：新增 ${job.added} 张，共 ${job.total} 张`);
+      await loadBook();
+      setTimeout(() => {
+        extendBar.classList.add('hidden');
+        extendBar.classList.remove('done', 'error');
+      }, 3000);
+      return;
+    }
+    if (job.status === 'error') {
+      showExtend('error', '❌ ' + (job.error || '未知错误'));
+      return;
+    }
+    showExtend('info', `⟳ ${job.progress || '生成中…'}（${sec}s）`);
+  }
+}
+
+function showExtend(kind, text) {
+  extendBar.classList.remove('hidden', 'done', 'error');
+  if (kind === 'done') extendBar.classList.add('done');
+  if (kind === 'error') extendBar.classList.add('error');
+  // 用 msg 替换 spin + text 组合
+  extendBar.querySelector('.spin').style.display = (kind === 'info') ? '' : 'none';
+  extendMsg.textContent = text;
+}
+
+// 图谱按钮先占位
+$('#graphBtn').addEventListener('click', () => {
+  location.href = `graph.html?id=${encodeURIComponent(bookId)}`;
+});
+
+// 支持 hash 定位到具体卡片（从图谱点击节点跳转过来）
+function scrollToHashCard() {
+  const h = decodeURIComponent(location.hash || '');
+  if (!h.startsWith('#card-')) return;
+  const target = document.querySelector(CSS.escape(h));
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('highlight');
+  setTimeout(() => target.classList.remove('highlight'), 2400);
+}
+window.addEventListener('hashchange', scrollToHashCard);
+
+// 首次加载后滚动
+const origRenderGrid = typeof renderGrid === 'function' ? renderGrid : null;
+
+loadBook().then(() => setTimeout(scrollToHashCard, 60));
+</script>
+</body>
+</html>

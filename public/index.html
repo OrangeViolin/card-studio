@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="cream">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卡片书斋 · 我的书架</title>
+<link rel="stylesheet" href="shelf.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-emoji">📚</span>
+    <h1>卡片书斋</h1>
+    <span class="brand-sub">把一本书，变成可浏览的卡片集</span>
+  </div>
+  <div class="topbar-right">
+    <button id="apiKeyBtn" class="icon-btn" title="设置 pdf2x.cn API Key（PDF 上传需要）">🔑</button>
+    <button id="themeBtn" class="icon-btn" title="切换主题">🎨</button>
+    <button id="uploadBtn" class="primary-btn">
+      <span>＋</span> 上传一本书
+    </button>
+  </div>
+</header>
+
+<main class="shelf-wrap">
+
+  <!-- 胶带装饰条 -->
+  <div class="tape-bar">
+    <span class="tape tape-a"></span>
+    <span class="tape tape-b"></span>
+    <span class="tape tape-c"></span>
+  </div>
+
+  <section class="shelf-intro">
+    <h2>我的书架</h2>
+    <p id="shelfHint">还没有书呢，上传一本开始吧 ↗</p>
+  </section>
+
+  <section id="bookGrid" class="book-grid"></section>
+
+  <!-- 空态 -->
+  <section id="emptyState" class="empty-state hidden">
+    <div class="empty-icon">📖</div>
+    <h3>书架空空如也</h3>
+    <p>上传一个 PDF、Markdown，或 <code>book.zip</code></p>
+    <p class="empty-dim">不知道怎么做？点击「上传」按钮查看格式说明</p>
+  </section>
+</main>
+
+<!-- 上传弹窗 -->
+<div id="uploadModal" class="modal hidden">
+  <div class="modal-mask" data-close></div>
+  <div class="modal-card">
+    <button class="modal-close" data-close>&times;</button>
+    <h3>上传一本书</h3>
+    <p class="modal-desc">支持 <b>PDF</b> / <b>Markdown</b> / <b>TXT</b> / <b>ZIP</b>。拖拽到下方，或点击选择。</p>
+
+    <label id="dropZone" class="drop-zone">
+      <input type="file" id="zipInput" accept=".zip,.md,.txt,.pdf" hidden>
+      <div class="drop-inner">
+        <div class="drop-icon">📦</div>
+        <div class="drop-text">点击或拖拽文件</div>
+        <div class="drop-sub">PDF（需 pdf2x.cn API Key）· MD/TXT 素材 · ZIP（成品或素材包）</div>
+      </div>
+    </label>
+
+    <div id="uploadStatus" class="upload-status"></div>
+
+    <details class="format-help">
+      <summary>📝 格式说明（点击展开）</summary>
+      <div class="format-help-body">
+<pre>四种上传模式：
+
+[A] PDF（约 30 秒 ~ 3 分钟）
+  PDF → pdf2x.cn 转 Markdown → Claude 生成卡片
+  需要 pdf2x.cn 的 API Key（右上角 🔑 设置）
+  免费 100 次调用，获取地址：https://pdf2x.cn/api/apikey/page
+
+[B] Markdown / TXT 单文件（约 1-3 分钟）
+  直接把读书笔记扔进来，Claude 自动生成卡片
+
+[C] ZIP 素材包（约 1-3 分钟）
+  book.zip
+  ├─ SKILL.md             # 或任意 .md / .txt
+  └─ references/
+     ├─ chapter01.md
+     └─ chapter02.md
+
+[D] ZIP 成品直传（秒级）
+  book.zip
+  ├─ book.json            # { title, author, subtitle, description, tapeColor, accentColor }
+  ├─ cards.json           # 卡片数组
+  └─ cover.png            # 可选
+
+cards.json 格式:
+[
+  {
+    "id": "c1",
+    "type": "term",        // term|people|counter|quote|action|tech|wild
+    "title": "心流 Flow",
+    "fields": {
+      "首创者": "Mihaly Csikszentmihalyi",
+      "诞生时间": "1975",
+      "原始定义": "..."
+    },
+    "source": "《Beyond Boredom and Anxiety》",
+    "tags": ["心理学"]
+  }
+]
+
+七种卡片类型与配色:
+📘 term     术语卡     蓝
+👤 people   人名卡     紫
+💥 counter  反常识卡   红
+✨ quote    金句卡     橙
+🎯 action   行动卡     绿
+🔧 tech     技巧卡     青
+🃏 wild     任意卡     灰</pre>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- API Key 设置弹窗 -->
+<div id="apiKeyModal" class="modal hidden">
+  <div class="modal-mask" data-close-key></div>
+  <div class="modal-card">
+    <button class="modal-close" data-close-key>&times;</button>
+    <h3>🔑 设置 pdf2x.cn API Key</h3>
+    <p class="modal-desc">仅上传 PDF 时需要。Key 保存在你本地浏览器（localStorage），不会上传到任何服务器。</p>
+
+    <ol class="key-steps">
+      <li>去 <a href="https://pdf2x.cn/api/apikey/page" target="_blank" rel="noopener">pdf2x.cn/api/apikey/page</a> 用手机号获取 Key（<b>免费 100 次调用</b>）</li>
+      <li>复制生成的 Key（形如 <code>sk-xxxxx…</code>）</li>
+      <li>粘贴到下面的输入框，点击保存</li>
+    </ol>
+
+    <div class="key-input-row">
+      <input type="password" id="apiKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false">
+      <button id="apiKeyToggle" class="icon-btn" title="显示/隐藏">👁</button>
+    </div>
+    <div class="key-actions">
+      <button id="apiKeyClear" class="ghost-btn">清除</button>
+      <button id="apiKeySave" class="primary-btn">保存</button>
+    </div>
+    <div id="apiKeyStatus" class="upload-status"></div>
+  </div>
+</div>
+
+<script src="shelf.js"></script>
+</body>
+</html>
