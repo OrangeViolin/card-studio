@@ -46,15 +46,15 @@ npm start
 |------|--------|------|
 | `PORT` | `3013` | HTTP 端口 |
 | `CARD_DATA_DIR` | `./data` | 书架 + 上传目录根 |
-| `PDF_PARSE_URL` | —— | **自建 parse 服务的完整 URL**（如 `http://192.168.41.107:7004/xxx`）。配了就走 V1 协议，不再需要 API Key |
-| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL` 未配时生效） |
+| `PDF_PARSE_URL` | `http://192.168.41.107:7004/pdf_parse` | **自建 parse 服务（V1 协议）的完整 URL**。默认走这个，不需要 API Key。设为 `off` 退回 pdf2x.cn |
+| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL=off` 时生效） |
 | `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 路径需要 |
 | `CLAUDE_CLI` | 自动探测 | Claude CLI 路径 |
 
 **PDF 解析分两条路**：
 
-- 若配了 `PDF_PARSE_URL` → 走 V1 协议（POST bytes + `async=true` → 轮询 → ZIP 解压出 `doc.md`），无需 Key
-- 否则 → 走 `pdf2x.cn` 的 `/api/parse/pdf2markdown`，需要 `PDF2X_API_KEY`
+- 默认：走内网 V1 服务 `http://192.168.41.107:7004/pdf_parse`（POST bytes + `async=true` → 轮询 → ZIP 解压出 `doc.md`），无需 Key
+- 退路：`PDF_PARSE_URL=off` → 走 `pdf2x.cn` 的 `/api/parse/pdf2markdown`，需要 `PDF2X_API_KEY`
 
 ---
 

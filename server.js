@@ -22,9 +22,11 @@ const PORT = process.env.PORT || 3013;
 const DATA_DIR = process.env.CARD_DATA_DIR || path.join(__dirname, 'data');
 const PDF2X_ENDPOINT = process.env.PDF2X_ENDPOINT || 'https://insightdoc.memect.cn';
 
-// 自建 parse 服务（可选）：完整 URL，例如 http://192.168.41.107:7004/xxx
+// 自建 parse 服务：完整 URL。默认指向内网 V1 服务。
 // 协议参考：parse_pdf_util.py V1（POST bytes + async=true → poll → ZIP 含 doc.md）
-const PDF_PARSE_URL = (process.env.PDF_PARSE_URL || '').trim();
+// 想关掉走 pdf2x 的话，设 PDF_PARSE_URL=off
+const PDF_PARSE_URL_RAW = (process.env.PDF_PARSE_URL ?? 'http://192.168.41.107:7004/pdf_parse').trim();
+const PDF_PARSE_URL = (PDF_PARSE_URL_RAW.toLowerCase() === 'off' || PDF_PARSE_URL_RAW === '') ? '' : PDF_PARSE_URL_RAW;
 
 // ============================================================
 // Claude CLI 自动探测（跨平台）
