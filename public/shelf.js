@@ -400,7 +400,8 @@ async function uploadFile(file) {
       setStatus('error', msg);
       return;
     }
-    if (data.jobId && (data.mode === 'generate' || data.mode === 'pdf' || data.mode === 'pdf-v1' || data.mode === 'pdf-pdf2x')) {
+    // 任何带 jobId 的响应都走 poll（generate / pdf-local / pdf-v1 / pdf-pdf2x / paste / url / ...）
+    if (data.jobId || data.generating) {
       await pollGenerateJob(data.jobId);
       return;
     }
