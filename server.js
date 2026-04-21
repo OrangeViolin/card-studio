@@ -22,11 +22,19 @@ const PORT = process.env.PORT || 3013;
 const DATA_DIR = process.env.CARD_DATA_DIR || path.join(__dirname, 'data');
 const PDF2X_ENDPOINT = process.env.PDF2X_ENDPOINT || 'https://insightdoc.memect.cn';
 
-// 自建 parse 服务：完整 URL。默认指向内网 V1 服务。
-// 协议参考：parse_pdf_util.py V1（POST bytes + async=true → poll → ZIP 含 doc.md）
-// 想关掉走 pdf2x 的话，设 PDF_PARSE_URL=off
-const PDF_PARSE_URL_RAW = (process.env.PDF_PARSE_URL ?? 'http://192.168.41.107:7004/pdf_parse').trim();
-const PDF_PARSE_URL = (PDF_PARSE_URL_RAW.toLowerCase() === 'off' || PDF_PARSE_URL_RAW === '') ? '' : PDF_PARSE_URL_RAW;
+// PDF 解析三选一（按 PDF_PARSE_URL 值判断）：
+//   空 / 'local' / 未设  → 本地 pdf-parse（默认，离线可用）
+//   http(s)://xxx        → V1 远程（如内网 http://192.168.41.107:7004/pdf_parse）
+//   'pdf2x'              → pdf2x.cn（走 PDF2X_ENDPOINT + PDF2X_API_KEY）
+const PDF_PARSE_URL_RAW = (process.env.PDF_PARSE_URL ?? '').trim();
+let PDF_PARSE_MODE = 'local';
+let PDF_PARSE_URL = '';
+if (/^https?:\/\//i.test(PDF_PARSE_URL_RAW)) {
+  PDF_PARSE_MODE = 'v1';
+  PDF_PARSE_URL = PDF_PARSE_URL_RAW;
+} else if (PDF_PARSE_URL_RAW.toLowerCase() === 'pdf2x') {
+  PDF_PARSE_MODE = 'pdf2x';
+}
 
 // ============================================================
 // Claude CLI 自动探测（跨平台）
@@ -481,7 +489,17 @@ const PDF2X_DISPATCHER = new Agent({
   connectTimeout: 60 * 1000,
 });
 
-// V1 协议：本地/自建 parse 服务（对应 parse_pdf_util.py 的 _parse_pdf_v1）
+// 本地解析：pdf-parse（默认路径，离线可用，文本型 PDF 效果好、扫描件效果差）
+async function pdfToMarkdownLocal(pdfPath) {
+  const pdfParse = require('pdf-parse');
+  const buf = fs.readFileSync(pdfPath);
+  const data = await pdfParse(buf);
+  const text = (data.text || '').trim();
+  if (!text) throw new Error('本地 pdf-parse 未能抽出文本（可能是扫描件，建议走远端 V1 或 pdf2x.cn）');
+  return { markdown: text, pages: data.numpages };
+}
+
+// V1 协议：远程 parse 服务（对应 parse_pdf_util.py 的 _parse_pdf_v1）
 async function pdfToMarkdownV1(pdfPath) {
   if (!PDF_PARSE_URL) throw new Error('未配置 PDF_PARSE_URL 环境变量');
   const buf = fs.readFileSync(pdfPath);
@@ -579,14 +597,16 @@ async function pdfToMarkdown(pdfPath, apiKey) {
 
 async function runPdfJob(jobId, pdfPath, originalName, apiKey, mode) {
   try {
-    const useV1 = mode === 'v1';
-    updateBookJob(jobId, {
-      status: 'running',
-      progress: useV1
-        ? 'PDF 转 Markdown（自建 parse 服务处理中，可能需要几分钟）…'
-        : 'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…',
-    });
-    const { markdown } = useV1 ? await pdfToMarkdownV1(pdfPath) : await pdfToMarkdown(pdfPath, apiKey);
+    const progressMsg = {
+      local:  'PDF 转文本（本地 pdf-parse，约 5-15 秒）…',
+      v1:     'PDF 转 Markdown（自建 parse 服务处理中，可能需要几分钟）…',
+      pdf2x:  'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…',
+    }[mode] || 'PDF 处理中…';
+    updateBookJob(jobId, { status: 'running', progress: progressMsg });
+    const { markdown } =
+      mode === 'local' ? await pdfToMarkdownLocal(pdfPath) :
+      mode === 'v1'    ? await pdfToMarkdownV1(pdfPath) :
+                         await pdfToMarkdown(pdfPath, apiKey);
     if (!markdown || !markdown.trim()) throw new Error('pdf2x 返回的 Markdown 为空');
 
     updateBookJob(jobId, { progress: 'Claude 正在生成卡片（约 2-3 分钟）…' });
@@ -622,16 +642,15 @@ app.post('/api/books/upload-pdf', booksUpload.single('pdfFile'), async (req, res
   const tmp = req.file.path;
   const originalName = req.file.originalname || 'document.pdf';
 
-  // 自动选 mode：配置了 PDF_PARSE_URL 优先走 V1（自建 parse 服务），否则走 pdf2x.cn
-  const useV1 = !!PDF_PARSE_URL;
+  // 按 PDF_PARSE_MODE 分派
   let apiKey = '';
-  if (!useV1) {
+  if (PDF_PARSE_MODE === 'pdf2x') {
     apiKey = (req.headers['x-pdf2x-key'] || process.env.PDF2X_API_KEY || '').toString().trim();
     if (!apiKey) {
       try { fs.unlinkSync(tmp); } catch {}
       return res.status(400).json({
         error: 'no_api_key',
-        detail: '请先设置 pdf2x.cn 的 API Key（右上角 🔑），或设置 PDF_PARSE_URL 走自建服务',
+        detail: '当前模式 pdf2x.cn 需要 API Key（右上角 🔑），或改 PDF_PARSE_URL 为空走本地解析',
         keyPage: 'https://pdf2x.cn/api/apikey/page',
       });
     }
@@ -642,8 +661,8 @@ app.post('/api/books/upload-pdf', booksUpload.single('pdfFile'), async (req, res
   }
 
   const jobId = createBookJob();
-  runPdfJob(jobId, tmp, originalName, apiKey, useV1 ? 'v1' : 'pdf2x');
-  res.json({ ok: true, mode: useV1 ? 'pdf-v1' : 'pdf-pdf2x', generating: true, jobId });
+  runPdfJob(jobId, tmp, originalName, apiKey, PDF_PARSE_MODE);
+  res.json({ ok: true, mode: `pdf-${PDF_PARSE_MODE}`, generating: true, jobId });
 });
 
 // ============================================================
@@ -805,7 +824,12 @@ app.listen(PORT, () => {
   console.log(`📚 卡片书斋 running at http://localhost:${PORT}`);
   console.log(`   Claude CLI: ${CLAUDE_CLI}`);
   console.log(`   Data dir:   ${DATA_DIR}`);
-  console.log(`   PDF parse:  ${PDF_PARSE_URL || `pdf2x.cn (${PDF2X_ENDPOINT})`}`);
+  const pdfInfo = {
+    local: 'local (pdf-parse, 离线)',
+    v1:    `v1 (${PDF_PARSE_URL})`,
+    pdf2x: `pdf2x.cn (${PDF2X_ENDPOINT})`,
+  }[PDF_PARSE_MODE];
+  console.log(`   PDF parse:  ${pdfInfo}`);
 
   if (!process.env.NO_AUTO_OPEN) {
     const { exec } = require('child_process');

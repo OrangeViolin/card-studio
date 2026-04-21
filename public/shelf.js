@@ -377,14 +377,10 @@ async function uploadFile(file) {
     return;
   }
 
-  // PDF 需要 API Key
+  // PDF：尽量带上 Key（如果本地存了），后端会根据自己的 MODE 决定是否使用
   let apiKey = '';
   if (plan.label === 'PDF') {
     apiKey = localStorage.getItem('cs.pdf2xKey') || '';
-    if (!apiKey) {
-      setStatus('error', '❌ 上传 PDF 需要先设置 pdf2x.cn 的 API Key（右上角 🔑）');
-      return;
-    }
   }
 
   setStatus('info', `上传 ${plan.label} 中…`);

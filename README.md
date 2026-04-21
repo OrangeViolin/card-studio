@@ -46,15 +46,26 @@ npm start
 |------|--------|------|
 | `PORT` | `3013` | HTTP 端口 |
 | `CARD_DATA_DIR` | `./data` | 书架 + 上传目录根 |
-| `PDF_PARSE_URL` | `http://192.168.41.107:7004/pdf_parse` | **自建 parse 服务（V1 协议）的完整 URL**。默认走这个，不需要 API Key。设为 `off` 退回 pdf2x.cn |
-| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL=off` 时生效） |
+| `PDF_PARSE_URL` | `` (空 = 本地) | PDF 解析路径。见下表 |
+| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL=pdf2x` 时生效） |
 | `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 路径需要 |
 | `CLAUDE_CLI` | 自动探测 | Claude CLI 路径 |
 
-**PDF 解析分两条路**：
+### PDF 解析三选一
 
-- 默认：走内网 V1 服务 `http://192.168.41.107:7004/pdf_parse`（POST bytes + `async=true` → 轮询 → ZIP 解压出 `doc.md`），无需 Key
-- 退路：`PDF_PARSE_URL=off` → 走 `pdf2x.cn` 的 `/api/parse/pdf2markdown`，需要 `PDF2X_API_KEY`
+| `PDF_PARSE_URL` 的值 | 走哪条路 | 何时用 |
+|---------------------|---------|--------|
+| 空 / 未设 | **本地 `pdf-parse`** | 开发机离线用，文本型 PDF 效果好，扫描件会失败 |
+| `http://...` 的完整 URL | **V1 远程**（对齐 `parse_pdf_util.py`） | 内网 / 生产环境，走自建解析服务，最好 |
+| `pdf2x` | **pdf2x.cn** | 公网环境但没有自建服务，有免费额度，要 `PDF2X_API_KEY` |
+
+启动时会在日志里打出当前 mode：
+
+```
+PDF parse:  local (pdf-parse, 离线)
+PDF parse:  v1 (http://192.168.41.107:7004/pdf_parse)
+PDF parse:  pdf2x.cn (https://insightdoc.memect.cn)
+```
 
 ---
 
