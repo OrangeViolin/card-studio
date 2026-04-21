@@ -33,10 +33,20 @@ npm start
 
 首次启动会自动创建 `data/books` 和 `data/book_upload` 目录。
 
-### PDF 上传需要的两件事
+### 零依赖试跑
 
-1. **Claude CLI**：用于把文本切成卡片。需要先在机器上跑通 `claude` 命令。
-2. **PDF 解析服务**（下文 `PDF2X_ENDPOINT`）：把 PDF 转成 Markdown。默认走 `https://insightdoc.memect.cn`；也可以改指向自建 parse 服务。
+想不装 Claude CLI、不连任何远程服务就跑通 UI？
+
+```bash
+LLM_PROVIDER=mock npm start
+```
+
+mock 模式会把素材切成占位卡片，四个 tab（文件/网页/粘贴/订阅）都能跑通。
+
+### 真跑需要的两件事
+
+1. **LLM**：三选一，见下面「LLM provider」表。
+2. **PDF 解析**：三选一，见下面「PDF 解析三选一」表。
 
 ---
 
@@ -46,10 +56,22 @@ npm start
 |------|--------|------|
 | `PORT` | `3013` | HTTP 端口 |
 | `CARD_DATA_DIR` | `./data` | 书架 + 上传目录根 |
+| `LLM_PROVIDER` | `cli` | LLM 模式：`cli` / `mock` / `http`。见下表 |
+| `LLM_API_URL` | —— | `http` 模式下的 OpenAI 兼容端点（如 `http://intra-llm/v1/chat/completions`） |
+| `LLM_API_KEY` | —— | `http` 模式鉴权；内网若无需鉴权可留空 |
+| `LLM_MODEL` | `gpt-4o-mini` | `http` 模式使用的模型名 |
+| `CLAUDE_CLI` | 自动探测 | `cli` 模式下的 Claude CLI 路径 |
 | `PDF_PARSE_URL` | `` (空 = 本地) | PDF 解析路径。见下表 |
 | `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL=pdf2x` 时生效） |
 | `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 路径需要 |
-| `CLAUDE_CLI` | 自动探测 | Claude CLI 路径 |
+
+### LLM provider
+
+| `LLM_PROVIDER` | 走哪条路 | 何时用 |
+|----------------|---------|--------|
+| `cli`（默认） | **本地 Claude CLI** | 开发机上有 `claude` 命令，最高质量 |
+| `mock` | **离线占位** | 只想跑通 UI、没 LLM 也要演示 |
+| `http` | **OpenAI 兼容 HTTP** | 内网部署，配 `LLM_API_URL` + `LLM_API_KEY` + `LLM_MODEL` |
 
 ### PDF 解析三选一
 

@@ -36,6 +36,15 @@ if (/^https?:\/\//i.test(PDF_PARSE_URL_RAW)) {
   PDF_PARSE_MODE = 'pdf2x';
 }
 
+// LLM provider 三选一（按 LLM_PROVIDER 判断）：
+//   'cli'（默认）→ 本地 Claude CLI（开发机用，需要装 claude 命令）
+//   'mock'       → 离线假数据（跑通 UI 全流程，不依赖任何外部服务）
+//   'http'       → OpenAI 兼容 HTTP（内网部署：LLM_API_URL + LLM_API_KEY + LLM_MODEL）
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || 'cli').toLowerCase();
+const LLM_API_URL = process.env.LLM_API_URL || '';
+const LLM_API_KEY = process.env.LLM_API_KEY || '';
+const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4o-mini';
+
 // ============================================================
 // Claude CLI 自动探测（跨平台）
 // ============================================================
@@ -82,19 +91,37 @@ function withFileLock(file, fn) {
 }
 
 // ============================================================
-// Claude CLI 调用（一次只能跑一个任务）
+// LLM 调用（三种 provider：cli / mock / http，一次只能跑一个任务）
 // ============================================================
 let ccBusy = false;
 let ccCurrentTask = '';
 
 app.get('/api/cc/status', (_req, res) => {
-  res.json({ busy: ccBusy, task: ccCurrentTask, cli: CLAUDE_CLI });
+  res.json({
+    busy: ccBusy,
+    task: ccCurrentTask,
+    provider: LLM_PROVIDER,
+    cli: LLM_PROVIDER === 'cli' ? CLAUDE_CLI : null,
+  });
 });
 
 function callClaude(prompt, taskName = '', timeoutMs = 10 * 60 * 1000) {
   if (ccBusy) return Promise.reject(new Error(`CC_BUSY:${ccCurrentTask}`));
   ccBusy = true;
   ccCurrentTask = taskName;
+  const release = () => { ccBusy = false; ccCurrentTask = ''; };
+  let p;
+  if (LLM_PROVIDER === 'mock') p = callLLMMock(prompt);
+  else if (LLM_PROVIDER === 'http') p = callLLMHttp(prompt, timeoutMs);
+  else p = callClaudeCLI(prompt, timeoutMs);
+  return p.then(
+    v => { release(); return v; },
+    e => { release(); throw e; },
+  );
+}
+
+// ----- provider: Claude CLI（开发机默认） -----
+function callClaudeCLI(prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
     const isWin = process.platform === 'win32';
     const child = spawn(CLAUDE_CLI, ['-p', '--output-format', 'text'], {
@@ -119,13 +146,11 @@ function callClaude(prompt, taskName = '', timeoutMs = 10 * 60 * 1000) {
 
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch {}
-      ccBusy = false; ccCurrentTask = '';
       reject(new Error(`Claude 超时（${Math.round(timeoutMs / 1000)}s）`));
     }, timeoutMs);
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      ccBusy = false; ccCurrentTask = '';
       if (stdout.trim()) resolve(stdout.trim());
       else if (code !== 0) reject(new Error(`Claude exited ${code}: ${stderr.slice(0, 300)}`));
       else resolve('');
@@ -133,10 +158,116 @@ function callClaude(prompt, taskName = '', timeoutMs = 10 * 60 * 1000) {
 
     child.on('error', (err) => {
       clearTimeout(timer);
-      ccBusy = false; ccCurrentTask = '';
       reject(err);
     });
   });
+}
+
+// ----- provider: Mock（离线假数据，跑通 UI 全流程） -----
+async function callLLMMock(prompt) {
+  // prompt 尾部是 buildCardsPrompt 拼进来的素材正文；抽取「## 材料」之后的部分
+  const marker = '## 材料';
+  const idx = prompt.lastIndexOf(marker);
+  const material = idx >= 0 ? prompt.slice(idx + marker.length) : prompt;
+
+  // 模拟一点延迟，方便看到"生成中"进度
+  await new Promise(r => setTimeout(r, 800));
+
+  // 从素材里抽标题：优先 # 一级标题，其次第一行有内容的短行
+  let title = '未命名（mock）';
+  const h1 = material.match(/^#\s+(.+)$/m);
+  if (h1) title = h1[1].trim().slice(0, 40);
+  else {
+    const firstLine = material.split(/\n+/).map(s => s.trim()).find(s => s.length >= 4 && s.length <= 40);
+    if (firstLine) title = firstLine.slice(0, 40);
+  }
+
+  // 抽若干可读长度的行做卡片素材
+  const lines = material
+    .split(/\n+/)
+    .map(l => l.replace(/^[#>*\-\d\.\s]+/, '').trim())
+    .filter(l => l.length >= 12 && l.length <= 180);
+
+  const pick = (arr, n) => arr.slice(0, n);
+  const q = pick(lines, 8);
+  const t = pick(lines.slice(8), 4);
+  const a = pick(lines.slice(12), 3);
+  const c = pick(lines.slice(15), 2);
+
+  // 如果素材太短，塞点占位行
+  while (q.length < 3) q.push('这是一张 mock 模式下的占位金句卡，用来验证 UI 链路。');
+  while (t.length < 2) t.push('占位术语：用于演示卡片渲染');
+  while (a.length < 2) a.push('下一步：跑通整条链路后再切到真实 LLM');
+
+  const cards = [];
+  q.forEach((s, i) => cards.push({
+    id: `q${i + 1}`, type: 'quote',
+    title: s.slice(0, 18),
+    fields: { 金句: s, 作者: '(mock)', 语境: '离线演示', 为何性感: '用于验证卡片渲染' },
+    source: 'mock',
+  }));
+  t.forEach((s, i) => cards.push({
+    id: `tm${i + 1}`, type: 'term',
+    title: s.slice(0, 14),
+    fields: { 原始定义: s, 首创者: '(mock)', 所属学科: '演示', 一句话理解: s.slice(0, 40) },
+    source: 'mock',
+  }));
+  a.forEach((s, i) => cards.push({
+    id: `a${i + 1}`, type: 'action',
+    title: s.slice(0, 14),
+    fields: { 行动: s, 最小启动: '读一遍', 预期改变: '把 UI 跑通', 触发场景: '上传素材后' },
+    source: 'mock',
+  }));
+  c.forEach((s, i) => cards.push({
+    id: `cn${i + 1}`, type: 'counter',
+    title: s.slice(0, 14),
+    fields: { 常识: '要接真实大模型才能测', 反常识: s, 证据类型: '占位', 出处: 'mock' },
+    source: 'mock',
+  }));
+
+  const result = {
+    book: {
+      title,
+      author: '(mock)',
+      subtitle: '',
+      description: 'mock 模式自动生成，仅用于 UI 演示',
+      tapeColor: '#A7D7B5',
+      accentColor: '#1F3D2C',
+    },
+    cards,
+  };
+  return JSON.stringify(result);
+}
+
+// ----- provider: OpenAI 兼容 HTTP（内网部署） -----
+async function callLLMHttp(prompt, timeoutMs) {
+  if (!LLM_API_URL) throw new Error('LLM_PROVIDER=http 需要设置 LLM_API_URL');
+  const dispatcher = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+  const resp = await undiciFetch(LLM_API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(LLM_API_KEY ? { authorization: `Bearer ${LLM_API_KEY}` } : {}),
+    },
+    body: JSON.stringify({
+      model: LLM_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      stream: false,
+    }),
+    dispatcher,
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`LLM HTTP ${resp.status}: ${detail.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const text = data?.choices?.[0]?.message?.content
+    || data?.choices?.[0]?.text
+    || data?.output_text
+    || '';
+  if (!text) throw new Error('LLM HTTP 返回为空');
+  return String(text).trim();
 }
 
 // ============================================================
@@ -822,7 +953,12 @@ app.post('/api/books/subscribe', async (req, res) => {
 // ============================================================
 app.listen(PORT, () => {
   console.log(`📚 卡片书斋 running at http://localhost:${PORT}`);
-  console.log(`   Claude CLI: ${CLAUDE_CLI}`);
+  const llmInfo = {
+    cli:  `Claude CLI (${CLAUDE_CLI})`,
+    mock: 'mock (离线假数据，零依赖)',
+    http: `http (${LLM_API_URL || '<未设 LLM_API_URL>'}, model=${LLM_MODEL})`,
+  }[LLM_PROVIDER] || `unknown (${LLM_PROVIDER})`;
+  console.log(`   LLM:        ${llmInfo}`);
   console.log(`   Data dir:   ${DATA_DIR}`);
   const pdfInfo = {
     local: 'local (pdf-parse, 离线)',
