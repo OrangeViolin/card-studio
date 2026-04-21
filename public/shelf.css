@@ -412,3 +412,49 @@ a.icon-btn { width: auto; padding: 0 14px; font-size: 14px; gap: 4px; }
   transition: background 0.15s;
 }
 .ghost-btn:hover { background: rgba(0,0,0,0.04); }
+
+/* ===== 内容源 Tabs ===== */
+.src-tabs {
+  display: flex; gap: 4px;
+  border-bottom: 1px solid var(--border, rgba(0,0,0,0.12));
+  margin: 8px 0 16px;
+}
+.src-tab {
+  padding: 8px 14px; font-size: 14px;
+  border: none; background: transparent;
+  color: var(--text-soft, #666);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: color 0.15s, border-color 0.15s;
+}
+.src-tab:hover { color: var(--text, #222); }
+.src-tab.active {
+  color: var(--accent, #2e6b3f);
+  border-bottom-color: var(--accent, #2e6b3f);
+  font-weight: 600;
+}
+.src-pane { display: none; }
+.src-pane.active { display: block; }
+.src-row {
+  display: flex; gap: 8px; margin-bottom: 12px;
+}
+.src-row input {
+  flex: 1;
+  padding: 10px 12px; font-size: 14px;
+  border: 1px solid var(--border, rgba(0,0,0,0.15));
+  border-radius: 8px; background: var(--bg-input, #fff);
+  color: var(--text, #222);
+}
+.src-row input:focus { outline: none; border-color: var(--accent, #2e6b3f); }
+.src-pane textarea {
+  width: 100%; box-sizing: border-box;
+  padding: 10px 12px; font-size: 14px;
+  font-family: inherit;
+  border: 1px solid var(--border, rgba(0,0,0,0.15));
+  border-radius: 8px; background: var(--bg-input, #fff);
+  color: var(--text, #222);
+  resize: vertical; min-height: 140px;
+}
+.src-pane textarea:focus { outline: none; border-color: var(--accent, #2e6b3f); }
+.src-actions {
+  display: flex; justify-content: flex-end; margin-top: 8px;
+}

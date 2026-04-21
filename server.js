@@ -15,11 +15,16 @@ const { randomUUID: uuidv4 } = require('crypto');
 const { spawn } = require('child_process');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
+const { Agent, fetch: undiciFetch, FormData: UndiciFormData } = require('undici');
 
 const app = express();
 const PORT = process.env.PORT || 3013;
 const DATA_DIR = process.env.CARD_DATA_DIR || path.join(__dirname, 'data');
 const PDF2X_ENDPOINT = process.env.PDF2X_ENDPOINT || 'https://insightdoc.memect.cn';
+
+// 自建 parse 服务（可选）：完整 URL，例如 http://192.168.41.107:7004/xxx
+// 协议参考：parse_pdf_util.py V1（POST bytes + async=true → poll → ZIP 含 doc.md）
+const PDF_PARSE_URL = (process.env.PDF_PARSE_URL || '').trim();
 
 // ============================================================
 // Claude CLI 自动探测（跨平台）
@@ -468,12 +473,63 @@ app.post('/api/books/upload-text', booksUpload.single('textFile'), async (req, r
 // ============================================================
 // 长超时 dispatcher：Node 内置 fetch 默认 headers timeout 5 分钟，大 PDF 提交会挂；
 // 必须用 undici 自己的 fetch（内置 fetch 用的是 Node 内部 undici，dispatcher 接口不兼容）
-const { Agent, fetch: undiciFetch, FormData: UndiciFormData } = require('undici');
 const PDF2X_DISPATCHER = new Agent({
   headersTimeout: 15 * 60 * 1000,
   bodyTimeout:    15 * 60 * 1000,
   connectTimeout: 60 * 1000,
 });
+
+// V1 协议：本地/自建 parse 服务（对应 parse_pdf_util.py 的 _parse_pdf_v1）
+async function pdfToMarkdownV1(pdfPath) {
+  if (!PDF_PARSE_URL) throw new Error('未配置 PDF_PARSE_URL 环境变量');
+  const buf = fs.readFileSync(pdfPath);
+  const parseParams = { use_llm: true, output_files: ['doc.md'] };
+
+  // 1. 提交
+  const submitUrl = new URL(PDF_PARSE_URL);
+  submitUrl.searchParams.set('params', JSON.stringify(parseParams));
+  submitUrl.searchParams.set('async', 'true');
+  const submit = await undiciFetch(submitUrl.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/pdf' },
+    body: buf,
+    dispatcher: PDF2X_DISPATCHER,
+  });
+  if (!submit.ok) {
+    const txt = await submit.text().catch(() => '');
+    throw new Error(`V1 提交失败 (${submit.status}): ${txt.slice(0, 200)}`);
+  }
+  const submitData = await submit.json();
+  const taskId = submitData?.data?.id || submitData?.task_id || submitData?.id;
+  if (!taskId) throw new Error('V1 未返回 task_id：' + JSON.stringify(submitData).slice(0, 200));
+
+  // 2. 轮询
+  const pollUrl = new URL(PDF_PARSE_URL);
+  pollUrl.searchParams.set('task_id', taskId);
+  const started = Date.now();
+  while (Date.now() - started < 30 * 60 * 1000) {
+    await new Promise(r => setTimeout(r, 3000));
+    let poll;
+    try {
+      poll = await undiciFetch(pollUrl.toString(), { dispatcher: PDF2X_DISPATCHER });
+    } catch { continue; }
+    if (!poll.ok) continue;
+    const ct = poll.headers.get('content-type') || '';
+    if (!ct.startsWith('application/json')) {
+      // ZIP 返回 = 完成
+      const zipBuf = Buffer.from(await poll.arrayBuffer());
+      const zip = new AdmZip(zipBuf);
+      const docEntry = zip.getEntries().find(e => !e.isDirectory && e.entryName.split('/').pop() === 'doc.md');
+      if (!docEntry) throw new Error('V1 返回 ZIP 中未找到 doc.md');
+      return { markdown: docEntry.getData().toString('utf-8'), taskId };
+    }
+    const data = await poll.json();
+    if (data.status === 'failed' || data.status === 'error') {
+      throw new Error('V1 解析失败：' + (data.error || data.message || 'unknown'));
+    }
+  }
+  throw new Error('V1 轮询超时（30 分钟）');
+}
 
 async function pdfToMarkdown(pdfPath, apiKey) {
   const buf = fs.readFileSync(pdfPath);
@@ -519,10 +575,16 @@ async function pdfToMarkdown(pdfPath, apiKey) {
   throw new Error('pdf2x 轮询超时（10 分钟）');
 }
 
-async function runPdfJob(jobId, pdfPath, originalName, apiKey) {
+async function runPdfJob(jobId, pdfPath, originalName, apiKey, mode) {
   try {
-    updateBookJob(jobId, { status: 'running', progress: 'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…' });
-    const { markdown } = await pdfToMarkdown(pdfPath, apiKey);
+    const useV1 = mode === 'v1';
+    updateBookJob(jobId, {
+      status: 'running',
+      progress: useV1
+        ? 'PDF 转 Markdown（自建 parse 服务处理中，可能需要几分钟）…'
+        : 'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…',
+    });
+    const { markdown } = useV1 ? await pdfToMarkdownV1(pdfPath) : await pdfToMarkdown(pdfPath, apiKey);
     if (!markdown || !markdown.trim()) throw new Error('pdf2x 返回的 Markdown 为空');
 
     updateBookJob(jobId, { progress: 'Claude 正在生成卡片（约 2-3 分钟）…' });
@@ -558,15 +620,19 @@ app.post('/api/books/upload-pdf', booksUpload.single('pdfFile'), async (req, res
   const tmp = req.file.path;
   const originalName = req.file.originalname || 'document.pdf';
 
-  // API Key 优先级：请求头 > 环境变量
-  const apiKey = (req.headers['x-pdf2x-key'] || process.env.PDF2X_API_KEY || '').toString().trim();
-  if (!apiKey) {
-    try { fs.unlinkSync(tmp); } catch {}
-    return res.status(400).json({
-      error: 'no_api_key',
-      detail: '请先设置 pdf2x.cn 的 API Key（右上角 🔑），或设置环境变量 PDF2X_API_KEY',
-      keyPage: 'https://pdf2x.cn/api/apikey/page',
-    });
+  // 自动选 mode：配置了 PDF_PARSE_URL 优先走 V1（自建 parse 服务），否则走 pdf2x.cn
+  const useV1 = !!PDF_PARSE_URL;
+  let apiKey = '';
+  if (!useV1) {
+    apiKey = (req.headers['x-pdf2x-key'] || process.env.PDF2X_API_KEY || '').toString().trim();
+    if (!apiKey) {
+      try { fs.unlinkSync(tmp); } catch {}
+      return res.status(400).json({
+        error: 'no_api_key',
+        detail: '请先设置 pdf2x.cn 的 API Key（右上角 🔑），或设置 PDF_PARSE_URL 走自建服务',
+        keyPage: 'https://pdf2x.cn/api/apikey/page',
+      });
+    }
   }
   if (ccBusy) {
     try { fs.unlinkSync(tmp); } catch {}
@@ -574,8 +640,160 @@ app.post('/api/books/upload-pdf', booksUpload.single('pdfFile'), async (req, res
   }
 
   const jobId = createBookJob();
-  runPdfJob(jobId, tmp, originalName, apiKey);
-  res.json({ ok: true, mode: 'pdf', generating: true, jobId });
+  runPdfJob(jobId, tmp, originalName, apiKey, useV1 ? 'v1' : 'pdf2x');
+  res.json({ ok: true, mode: useV1 ? 'pdf-v1' : 'pdf-pdf2x', generating: true, jobId });
+});
+
+// ============================================================
+// 通用：从一段纯文本 material 走 Claude 生成 → 落盘
+// ============================================================
+async function runMaterialJob(jobId, material, fallbackTitle, progressHint = 'Claude 正在生成卡片（约 2-3 分钟）…') {
+  try {
+    if (!material || !material.trim()) throw new Error('素材为空');
+    updateBookJob(jobId, { status: 'running', progress: progressHint });
+    const raw = await callClaude(buildCardsPrompt(material, 30), `生成卡片:${fallbackTitle}`);
+    const cleaned = stripJsonFence(raw);
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('Claude 返回格式错误，未找到 JSON');
+    const parsed = safeJsonParse(match[0]);
+    const bookMeta = parsed.book || {};
+    const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
+    if (!bookMeta.title) bookMeta.title = fallbackTitle;
+    if (!cards.length) throw new Error('Claude 未生成任何卡片');
+
+    updateBookJob(jobId, { progress: '保存到书架…' });
+    const result = await persistBook(bookMeta, cards, null, null);
+    try { fs.writeFileSync(path.join(bookDir(result.id), 'source.txt'), material, 'utf-8'); } catch {}
+    updateBookJob(jobId, {
+      status: 'done',
+      progress: `生成完成 · ${result.cardCount} 张卡片`,
+      bookId: result.id,
+      book: result.book,
+    });
+  } catch (err) {
+    console.error('[materialJob]', err);
+    updateBookJob(jobId, { status: 'error', error: err.message });
+  }
+}
+
+function htmlToText(html) {
+  // 粗略抽正文：去 script/style/nav/footer，再 strip tags
+  let s = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<aside[\s\S]*?<\/aside>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s;
+}
+
+// ------------------------------------------------------------
+// [A] URL 抓取：给个链接，抓网页 → 生成卡片
+// ------------------------------------------------------------
+app.post('/api/books/upload-url', async (req, res) => {
+  const url = (req.body?.url || '').toString().trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'invalid_url', detail: '请提供 http(s) 开头的 URL' });
+  }
+  if (ccBusy) {
+    return res.status(409).json({ error: 'cc_busy', detail: `Claude 正在忙「${ccCurrentTask}」` });
+  }
+  const jobId = createBookJob();
+  (async () => {
+    try {
+      updateBookJob(jobId, { status: 'running', progress: '抓取网页…' });
+      const r = await undiciFetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 card-studio' },
+        dispatcher: PDF2X_DISPATCHER,
+      });
+      if (!r.ok) throw new Error(`抓取失败 ${r.status}`);
+      const html = await r.text();
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : new URL(url).hostname;
+      const body = htmlToText(html);
+      const material = `# ${title}\n来源: ${url}\n\n${body.slice(0, 180000)}`;
+      await runMaterialJob(jobId, material, title);
+    } catch (err) {
+      console.error('[upload-url]', err);
+      updateBookJob(jobId, { status: 'error', error: err.message });
+    }
+  })();
+  res.json({ ok: true, mode: 'url', generating: true, jobId });
+});
+
+// ------------------------------------------------------------
+// [B] 粘贴文本：{ text, title? } → 生成卡片
+// ------------------------------------------------------------
+app.post('/api/books/paste', async (req, res) => {
+  const text = (req.body?.text || '').toString();
+  const title = (req.body?.title || '剪贴板笔记').toString().trim() || '剪贴板笔记';
+  if (!text.trim()) return res.status(400).json({ error: 'empty' });
+  if (ccBusy) return res.status(409).json({ error: 'cc_busy', detail: `Claude 正在忙「${ccCurrentTask}」` });
+  const jobId = createBookJob();
+  runMaterialJob(jobId, `# ${title}\n\n${text}`, title);
+  res.json({ ok: true, mode: 'paste', generating: true, jobId });
+});
+
+// ------------------------------------------------------------
+// [C] 订阅/导入远端 cards.json（或 book.json+cards.json）
+// POST { url } → 从远端拉 JSON/ZIP 成品直接落盘
+// ------------------------------------------------------------
+app.post('/api/books/subscribe', async (req, res) => {
+  const url = (req.body?.url || '').toString().trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'invalid_url' });
+  }
+  try {
+    const r = await undiciFetch(url, { dispatcher: PDF2X_DISPATCHER });
+    if (!r.ok) throw new Error(`拉取失败 ${r.status}`);
+    const ct = r.headers.get('content-type') || '';
+    // ZIP
+    if (ct.includes('zip') || /\.zip(\?|$)/i.test(url)) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const zip = new AdmZip(buf);
+      const entries = zip.getEntries();
+      const find = (name) => entries.find(e => !e.isDirectory && e.entryName.split('/').pop() === name);
+      const bookEntry = find('book.json');
+      const cardsEntry = find('cards.json');
+      if (!bookEntry || !cardsEntry) throw new Error('ZIP 缺少 book.json 或 cards.json');
+      const bookMeta = JSON.parse(bookEntry.getData().toString('utf-8'));
+      const cardsRaw = JSON.parse(cardsEntry.getData().toString('utf-8'));
+      const cardsArray = Array.isArray(cardsRaw) ? cardsRaw : (cardsRaw.cards || []);
+      let coverBuf = null, coverExt = null;
+      for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+        const ce = find(`cover.${ext}`);
+        if (ce) { coverBuf = ce.getData(); coverExt = ext; break; }
+      }
+      const result = await persistBook(bookMeta, cardsArray, coverBuf, coverExt);
+      return res.json({ ok: true, mode: 'subscribe-zip', id: result.id, book: result.book, cardCount: result.cardCount });
+    }
+    // JSON：可以是 {book, cards} 或 纯 cards 数组
+    const data = await r.json();
+    let bookMeta, cardsArray;
+    if (Array.isArray(data)) {
+      bookMeta = { title: new URL(url).pathname.split('/').pop() || '订阅卡片集' };
+      cardsArray = data;
+    } else {
+      bookMeta = data.book || { title: data.title || '订阅卡片集' };
+      cardsArray = Array.isArray(data.cards) ? data.cards : [];
+    }
+    if (!cardsArray.length) throw new Error('远端未返回任何卡片');
+    const result = await persistBook(bookMeta, cardsArray, null, null);
+    res.json({ ok: true, mode: 'subscribe-json', id: result.id, book: result.book, cardCount: result.cardCount });
+  } catch (err) {
+    console.error('[subscribe]', err);
+    res.status(500).json({ error: 'subscribe_failed', detail: err.message });
+  }
 });
 
 // ============================================================
@@ -585,7 +803,7 @@ app.listen(PORT, () => {
   console.log(`📚 卡片书斋 running at http://localhost:${PORT}`);
   console.log(`   Claude CLI: ${CLAUDE_CLI}`);
   console.log(`   Data dir:   ${DATA_DIR}`);
-  console.log(`   pdf2x:      ${PDF2X_ENDPOINT}`);
+  console.log(`   PDF parse:  ${PDF_PARSE_URL || `pdf2x.cn (${PDF2X_ENDPOINT})`}`);
 
   if (!process.env.NO_AUTO_OPEN) {
     const { exec } = require('child_process');

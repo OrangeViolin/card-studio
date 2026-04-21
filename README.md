@@ -11,7 +11,11 @@
 | 能力 | 说明 |
 |------|------|
 | 书架视图 | 一本书一个格子，封面 + 标题 + 作者 + 卡片数 |
-| 上传解析 | PDF（走 pdf2x.cn 或自建 parse 服务）/ Markdown / TXT / ZIP 拖拽或点选上传 |
+| 文件上传 | PDF / Markdown / TXT / ZIP / 整个文件夹（拖进去就行） |
+| PDF 解析 | 走 `pdf2x.cn` 或**自建 parse 服务**（环境变量切换） |
+| 网页链接 | 贴一个 URL，服务器抓正文 → 生成卡片 |
+| 粘贴文本 | 文章 / 笔记 / 聊天记录，任何长文直接粘进来 |
+| 订阅导入 | 从远端 URL 拉 `cards.json` 或 `book.zip`，一键入库 |
 | 七种卡片 | term · people · counter · quote · action · tech · wild，Claude CLI 生成 |
 | 本地数据 | 全部写 `./data`，不上云，不打点 |
 
@@ -41,10 +45,16 @@ npm start
 | 变量 | 默认值 | 作用 |
 |------|--------|------|
 | `PORT` | `3013` | HTTP 端口 |
-| `DATA_DIR` | `./data` | 书架 + 上传目录根 |
-| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | PDF 解析服务地址；指向自建 parse 服务时填 `http://192.168.41.107:7004` 等 |
-| `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 需要，自建 parse 服务不需要 |
-| `CLAUDE_BIN` | `claude` | Claude CLI 路径 |
+| `CARD_DATA_DIR` | `./data` | 书架 + 上传目录根 |
+| `PDF_PARSE_URL` | —— | **自建 parse 服务的完整 URL**（如 `http://192.168.41.107:7004/xxx`）。配了就走 V1 协议，不再需要 API Key |
+| `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL` 未配时生效） |
+| `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 路径需要 |
+| `CLAUDE_CLI` | 自动探测 | Claude CLI 路径 |
+
+**PDF 解析分两条路**：
+
+- 若配了 `PDF_PARSE_URL` → 走 V1 协议（POST bytes + `async=true` → 轮询 → ZIP 解压出 `doc.md`），无需 Key
+- 否则 → 走 `pdf2x.cn` 的 `/api/parse/pdf2markdown`，需要 `PDF2X_API_KEY`
 
 ---
 
@@ -123,8 +133,13 @@ data/
 | GET    | `/api/books` | 书架列表 |
 | GET    | `/api/books/:id` | 某本书的元数据 |
 | GET    | `/api/books/:id/cards` | 某本书的卡片 |
-| POST   | `/api/books/upload` | 上传 Markdown / TXT / ZIP |
-| POST   | `/api/books/upload-pdf` | 上传 PDF（走 PDF2X_ENDPOINT 解析） |
+| POST   | `/api/books/upload` | 上传 ZIP（成品直传 或 素材包） |
+| POST   | `/api/books/upload-text` | 上传 Markdown / TXT 单文件 |
+| POST   | `/api/books/upload-pdf` | 上传 PDF（自动选 V1 或 pdf2x） |
+| POST   | `/api/books/upload-url` | `{ url }` 抓网页 → 卡片 |
+| POST   | `/api/books/paste` | `{ text, title? }` 粘贴文本 → 卡片 |
+| POST   | `/api/books/subscribe` | `{ url }` 从远端 URL 拉 cards.json 或 book.zip |
+| GET    | `/api/books/jobs/:id` | 轮询生成任务进度 |
 | DELETE | `/api/books/:id` | 删除一本书 |
 
 ---
@@ -133,11 +148,14 @@ data/
 
 - [x] 书架 + 卡片渲染
 - [x] PDF / Markdown / ZIP 上传
-- [ ] URL 抓取（网页 → 卡片）
-- [ ] 剪贴板捕获（选中即入库）
-- [ ] 订阅远端 cards.json
-- [ ] 文件夹拖入（批量）
+- [x] URL 抓取（网页 → 卡片）
+- [x] 粘贴文本（文章 / 笔记 / 聊天记录）
+- [x] 订阅远端 cards.json / book.zip
+- [x] 文件夹拖入（递归读 .md/.txt）
+- [x] 自建 parse 服务接入（V1 协议）
 - [ ] 卡片检索 / 标签筛选 / 收藏
+- [ ] 订阅的定时刷新（当前是一次性导入）
+- [ ] 浏览器扩展：选中文字即入库
 
 ---
 

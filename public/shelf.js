@@ -235,9 +235,128 @@ zipInput.addEventListener('change', (e) => {
 ['dragleave', 'drop'].forEach(ev => dropZone.addEventListener(ev, (e) => {
   e.preventDefault(); dropZone.classList.remove('drag-over');
 }));
-dropZone.addEventListener('drop', (e) => {
+dropZone.addEventListener('drop', async (e) => {
+  // 检测是否拖入了文件夹（支持 webkitGetAsEntry）
+  const items = e.dataTransfer.items ? Array.from(e.dataTransfer.items) : [];
+  const entries = items.map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  const firstDir = entries.find(en => en.isDirectory);
+  if (firstDir) {
+    const files = await walkDirectory(firstDir);
+    if (!files.length) { setStatus('error', '文件夹里没找到 .md / .txt'); return; }
+    await uploadFolderAsPaste(firstDir.name || '文件夹', files);
+    return;
+  }
   const f = e.dataTransfer.files[0];
   if (f) uploadFile(f);
+});
+
+// 递归遍历 DirectoryEntry，取所有 .md / .txt 文件
+async function walkDirectory(dir) {
+  const out = [];
+  async function readAll(entry) {
+    if (entry.isFile) {
+      const name = entry.name.toLowerCase();
+      if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')) {
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        const text = await file.text();
+        out.push({ path: entry.fullPath || entry.name, text });
+      }
+      return;
+    }
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      while (true) {
+        const chunk = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!chunk.length) break;
+        for (const c of chunk) await readAll(c);
+      }
+    }
+  }
+  await readAll(dir);
+  return out;
+}
+
+// 文件夹拼成一段 material → 走 /api/books/paste
+async function uploadFolderAsPaste(folderName, files) {
+  const combined = files.map(f => `\n\n--- ${f.path} ---\n${f.text}`).join('');
+  setStatus('info', `📁 识别到文件夹《${folderName}》共 ${files.length} 个文档，提交中…`);
+  try {
+    const res = await fetch('/api/books/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: folderName, text: combined }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setStatus('error', '❌ ' + (data.detail || data.error)); return; }
+    if (data.jobId) await pollGenerateJob(data.jobId);
+  } catch (err) { setStatus('error', '❌ ' + err.message); }
+}
+
+// ===== 内容源 Tabs =====
+$$('.src-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.src-tab').forEach(b => b.classList.toggle('active', b === btn));
+    const target = btn.dataset.tab;
+    $$('.src-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === target));
+    statusEl.className = 'upload-status'; statusEl.textContent = '';
+  });
+});
+
+// ===== URL 抓取 =====
+$('#urlSubmit').addEventListener('click', async () => {
+  const url = $('#urlInput').value.trim();
+  if (!url) { setStatus('error', '请填 URL'); return; }
+  setStatus('info', '🌐 抓取网页中…');
+  try {
+    const res = await fetch('/api/books/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setStatus('error', '❌ ' + (data.detail || data.error)); return; }
+    if (data.jobId) await pollGenerateJob(data.jobId);
+  } catch (err) { setStatus('error', '❌ ' + err.message); }
+});
+
+// ===== 粘贴文本 =====
+$('#pasteSubmit').addEventListener('click', async () => {
+  const text = $('#pasteText').value;
+  const title = $('#pasteTitle').value.trim() || '剪贴板笔记';
+  if (!text.trim()) { setStatus('error', '内容为空'); return; }
+  setStatus('info', '📝 提交中…');
+  try {
+    const res = await fetch('/api/books/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, title }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setStatus('error', '❌ ' + (data.detail || data.error)); return; }
+    if (data.jobId) await pollGenerateJob(data.jobId);
+  } catch (err) { setStatus('error', '❌ ' + err.message); }
+});
+
+// ===== 订阅远端 =====
+$('#subSubmit').addEventListener('click', async () => {
+  const url = $('#subUrl').value.trim();
+  if (!url) { setStatus('error', '请填 URL'); return; }
+  setStatus('info', '📡 拉取远端…');
+  try {
+    const res = await fetch('/api/books/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setStatus('error', '❌ ' + (data.detail || data.error)); return; }
+    setStatus('success', `✅ 已导入《${data.book.title}》共 ${data.cardCount} 张卡片`);
+    await loadBooks();
+    setTimeout(() => {
+      modal.classList.add('hidden');
+      statusEl.className = 'upload-status'; statusEl.textContent = '';
+    }, 1200);
+  } catch (err) { setStatus('error', '❌ ' + err.message); }
 });
 
 // ===== 文件分派：根据扩展名选不同的 endpoint =====
@@ -285,7 +404,7 @@ async function uploadFile(file) {
       setStatus('error', msg);
       return;
     }
-    if ((data.mode === 'generate' || data.mode === 'pdf') && data.jobId) {
+    if (data.jobId && (data.mode === 'generate' || data.mode === 'pdf' || data.mode === 'pdf-v1' || data.mode === 'pdf-pdf2x')) {
       await pollGenerateJob(data.jobId);
       return;
     }

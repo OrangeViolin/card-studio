@@ -53,17 +53,60 @@
   <div class="modal-mask" data-close></div>
   <div class="modal-card">
     <button class="modal-close" data-close>&times;</button>
-    <h3>上传一本书</h3>
-    <p class="modal-desc">支持 <b>PDF</b> / <b>Markdown</b> / <b>TXT</b> / <b>ZIP</b>。拖拽到下方，或点击选择。</p>
+    <h3>新增一本书</h3>
 
-    <label id="dropZone" class="drop-zone">
-      <input type="file" id="zipInput" accept=".zip,.md,.txt,.pdf" hidden>
-      <div class="drop-inner">
-        <div class="drop-icon">📦</div>
-        <div class="drop-text">点击或拖拽文件</div>
-        <div class="drop-sub">PDF（需 pdf2x.cn API Key）· MD/TXT 素材 · ZIP（成品或素材包）</div>
+    <!-- Tabs -->
+    <div class="src-tabs" role="tablist">
+      <button class="src-tab active" data-tab="file">文件</button>
+      <button class="src-tab" data-tab="url">网页链接</button>
+      <button class="src-tab" data-tab="paste">粘贴文本</button>
+      <button class="src-tab" data-tab="subscribe">订阅</button>
+    </div>
+
+    <!-- [1] 文件 / 文件夹 -->
+    <div class="src-pane active" data-pane="file">
+      <p class="modal-desc">支持 <b>PDF</b> / <b>Markdown</b> / <b>TXT</b> / <b>ZIP</b>，以及整个<b>文件夹</b>（递归读 .md/.txt）。拖拽到下方，或点击选择。</p>
+      <label id="dropZone" class="drop-zone">
+        <input type="file" id="zipInput" accept=".zip,.md,.txt,.pdf" hidden>
+        <div class="drop-inner">
+          <div class="drop-icon">📦</div>
+          <div class="drop-text">点击或拖拽文件 / 文件夹</div>
+          <div class="drop-sub">PDF（需 pdf2x.cn Key 或自建 parse 服务）· MD/TXT · ZIP · 文件夹</div>
+        </div>
+      </label>
+    </div>
+
+    <!-- [2] 网页链接 -->
+    <div class="src-pane" data-pane="url">
+      <p class="modal-desc">贴一个网页链接，服务器会抓正文 → Claude 生成卡片。</p>
+      <div class="src-row">
+        <input type="url" id="urlInput" placeholder="https://..." spellcheck="false">
+        <button class="primary-btn" id="urlSubmit">抓取</button>
       </div>
-    </label>
+    </div>
+
+    <!-- [3] 粘贴文本 -->
+    <div class="src-pane" data-pane="paste">
+      <p class="modal-desc">粘贴一段文字（文章、笔记、聊天记录、任何长文）— Claude 自动生成卡片。</p>
+      <div class="src-row">
+        <input type="text" id="pasteTitle" placeholder="标题（可选）" spellcheck="false">
+      </div>
+      <textarea id="pasteText" rows="8" placeholder="这里粘贴..." spellcheck="false"></textarea>
+      <div class="src-actions">
+        <button class="primary-btn" id="pasteSubmit">生成卡片</button>
+      </div>
+    </div>
+
+    <!-- [4] 订阅 -->
+    <div class="src-pane" data-pane="subscribe">
+      <p class="modal-desc">
+        从一个远端 URL 拉 <code>cards.json</code> 或 <code>book.zip</code>（含 book.json + cards.json），直接导入书架。
+      </p>
+      <div class="src-row">
+        <input type="url" id="subUrl" placeholder="https://.../cards.json 或 https://.../book.zip" spellcheck="false">
+        <button class="primary-btn" id="subSubmit">订阅并导入</button>
+      </div>
+    </div>
 
     <div id="uploadStatus" class="upload-status"></div>
 
