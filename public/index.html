@@ -113,34 +113,37 @@
     <details class="format-help">
       <summary>📝 格式说明（点击展开）</summary>
       <div class="format-help-body">
-<pre>四种上传模式：
+<pre>四个上传 tab：
 
-[A] PDF（约 30 秒 ~ 3 分钟）
-  PDF → pdf2x.cn 转 Markdown → Claude 生成卡片
-  需要 pdf2x.cn 的 API Key（右上角 🔑 设置）
-  免费 100 次调用，获取地址：https://pdf2x.cn/api/apikey/page
+[文件] 文件 / 文件夹 / ZIP（约 1-3 分钟，PDF 视解析模式另算）
+  · PDF          → 服务器解析成 Markdown → LLM 生成卡片
+  · Markdown / TXT 单文件 → 直接喂给 LLM
+  · 整个文件夹    → 递归收集 .md/.txt，合并后喂给 LLM
+  · ZIP 素材包    → 里面一堆 .md/.txt
+  · ZIP 成品直传  → 秒级落盘（见下方 book.json + cards.json 结构）
 
-[B] Markdown / TXT 单文件（约 1-3 分钟）
-  直接把读书笔记扔进来，Claude 自动生成卡片
+[网页链接] 粘一个 URL（约 1-3 分钟）
+  服务器抓网页正文 → LLM 生成卡片
 
-[C] ZIP 素材包（约 1-3 分钟）
-  book.zip
-  ├─ SKILL.md             # 或任意 .md / .txt
-  └─ references/
-     ├─ chapter01.md
-     └─ chapter02.md
+[粘贴文本] 长文/笔记/聊天记录（约 1-3 分钟）
+  贴啥都行，服务器当素材处理
 
-[D] ZIP 成品直传（秒级）
-  book.zip
-  ├─ book.json            # { title, author, subtitle, description, tapeColor, accentColor }
-  ├─ cards.json           # 卡片数组
-  └─ cover.png            # 可选
+[订阅] 远端 cards.json 或 book.zip（秒级）
+  贴一个 URL，一次性拉下来进书架
 
-cards.json 格式:
+------
+
+ZIP 成品直传结构：
+book.zip
+├─ book.json    # { title, author, subtitle, description, tapeColor, accentColor }
+├─ cards.json   # 卡片数组
+└─ cover.png    # 可选
+
+cards.json 格式：
 [
   {
     "id": "c1",
-    "type": "term",        // term|people|counter|quote|action|tech|wild
+    "type": "term",         // term|people|counter|quote|action|tech|wild
     "title": "心流 Flow",
     "fields": {
       "首创者": "Mihaly Csikszentmihalyi",
@@ -152,14 +155,20 @@ cards.json 格式:
   }
 ]
 
-七种卡片类型与配色:
+七种卡片类型与配色：
 📘 term     术语卡     蓝
 👤 people   人名卡     紫
 💥 counter  反常识卡   红
 ✨ quote    金句卡     橙
 🎯 action   行动卡     绿
 🔧 tech     技巧卡     青
-🃏 wild     任意卡     灰</pre>
+🃏 wild     任意卡     灰
+
+------
+
+部署模式（由后端环境变量控制，前端不用关心）：
+· LLM：cli（本地 Claude）/ mock（离线假数据）/ http（内网 OpenAI 兼容端点）
+· PDF 解析：local（内置 pdf-parse）/ v1（自建服务）/ pdf2x（pdf2x.cn）</pre>
       </div>
     </details>
   </div>

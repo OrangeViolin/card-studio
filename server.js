@@ -620,14 +620,20 @@ const PDF2X_DISPATCHER = new Agent({
   connectTimeout: 60 * 1000,
 });
 
-// 本地解析：pdf-parse（默认路径，离线可用，文本型 PDF 效果好、扫描件效果差）
+// 本地解析：pdf-parse v2（默认路径，离线可用，文本型 PDF 效果好、扫描件效果差）
 async function pdfToMarkdownLocal(pdfPath) {
-  const pdfParse = require('pdf-parse');
+  const { PDFParse } = require('pdf-parse');
   const buf = fs.readFileSync(pdfPath);
-  const data = await pdfParse(buf);
-  const text = (data.text || '').trim();
-  if (!text) throw new Error('本地 pdf-parse 未能抽出文本（可能是扫描件，建议走远端 V1 或 pdf2x.cn）');
-  return { markdown: text, pages: data.numpages };
+  // pdf-parse v2 接受 Uint8Array / ArrayBuffer
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+  try {
+    const result = await parser.getText();
+    const text = String(result?.text || '').trim();
+    if (!text) throw new Error('本地 pdf-parse 未能抽出文本（可能是扫描件，建议走远端 V1 或 pdf2x.cn）');
+    return { markdown: text, pages: result?.pages?.length ?? result?.total ?? 0 };
+  } finally {
+    try { await parser.destroy(); } catch {}
+  }
 }
 
 // V1 协议：远程 parse 服务（对应 parse_pdf_util.py 的 _parse_pdf_v1）
