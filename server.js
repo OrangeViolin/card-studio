@@ -620,6 +620,11 @@ const PDF2X_DISPATCHER = new Agent({
   connectTimeout: 60 * 1000,
 });
 
+// 剥掉 pdf-parse v2 自插的 `-- N of M --` 页码分隔符，用来判断实际文本量
+function stripPageMarkers(s) {
+  return String(s || '').replace(/--\s*\d+\s*of\s*\d+\s*--/gi, '').replace(/\s+/g, '').trim();
+}
+
 // 本地解析：pdf-parse v2（默认路径，离线可用，文本型 PDF 效果好、扫描件效果差）
 async function pdfToMarkdownLocal(pdfPath) {
   const { PDFParse } = require('pdf-parse');
@@ -629,8 +634,17 @@ async function pdfToMarkdownLocal(pdfPath) {
   try {
     const result = await parser.getText();
     const text = String(result?.text || '').trim();
-    if (!text) throw new Error('本地 pdf-parse 未能抽出文本（可能是扫描件，建议走远端 V1 或 pdf2x.cn）');
-    return { markdown: text, pages: result?.pages?.length ?? result?.total ?? 0 };
+    const pages = result?.pages?.length ?? result?.total ?? 0;
+    // 去掉页码标记后的真实字符数：扫描版常常只剩 `-- N of M --`
+    const realChars = stripPageMarkers(text).length;
+    const minChars = Math.max(200, pages * 10);
+    if (!text || realChars < minChars) {
+      throw new Error(
+        `本地 pdf-parse 只抽到 ${realChars} 个有效字符（共 ${pages} 页），基本是扫描版 PDF。` +
+        `本地模式不能处理扫描件，请改用 V1 或 pdf2x 模式（前者需要自建 parse 服务，后者在右上角 🔑 填 API Key）`
+      );
+    }
+    return { markdown: text, pages };
   } finally {
     try { await parser.destroy(); } catch {}
   }
@@ -744,13 +758,30 @@ async function runPdfJob(jobId, pdfPath, originalName, apiKey, mode) {
       mode === 'local' ? await pdfToMarkdownLocal(pdfPath) :
       mode === 'v1'    ? await pdfToMarkdownV1(pdfPath) :
                          await pdfToMarkdown(pdfPath, apiKey);
-    if (!markdown || !markdown.trim()) throw new Error('pdf2x 返回的 Markdown 为空');
+    if (!markdown || !markdown.trim()) throw new Error(`PDF 解析（${mode}）返回空内容`);
+    // 统一护栏：去掉页码/空白后实际字符数过少 = 扫描件或空 PDF，不要喂给 Claude（它会幻觉）
+    const realChars = stripPageMarkers(markdown).length;
+    if (realChars < 200) {
+      throw new Error(
+        `PDF 解析（${mode}）只抽出 ${realChars} 个有效字符，基本是扫描版或空文档。` +
+        `本地模式抽不出，请换 V1 或 pdf2x 模式重试`
+      );
+    }
 
     updateBookJob(jobId, { progress: 'Claude 正在生成卡片（约 2-3 分钟）…' });
     const raw = await callClaude(buildCardsPrompt(markdown, 30), `PDF 生成:${originalName}`);
+    // 把 LLM 原始返回落盘，方便排障
+    try {
+      const debugDir = path.join(DATA_DIR, 'llm_debug');
+      if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+      fs.writeFileSync(path.join(debugDir, `${jobId}.txt`), raw || '(empty)', 'utf-8');
+    } catch {}
     const cleaned = stripJsonFence(raw);
     const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Claude 返回格式错误');
+    if (!match) {
+      const preview = (raw || '').slice(0, 400).replace(/\s+/g, ' ');
+      throw new Error(`Claude 返回里没有 JSON 对象。前 400 字：${preview || '(空)'}（完整输出在 data/llm_debug/${jobId}.txt）`);
+    }
     const parsed = safeJsonParse(match[0]);
     const bookMeta = parsed.book || {};
     const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
