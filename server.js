@@ -368,7 +368,27 @@ function collectSkillMaterials(dir, maxTotal = 180000) {
   return combined;
 }
 
+// Claude CLI 的 context 大概 200K token，给 prompt 骨架和输出留空间后
+// 素材最多约 120K 字符。超过就均匀采样——头部+尾部完整，中间按段截取，
+// 这样全书章节都能被看到，不至于只读到前几章。
+const MAX_MATERIAL_CHARS = 120_000;
+function trimMaterial(material) {
+  const s = String(material || '');
+  if (s.length <= MAX_MATERIAL_CHARS) return s;
+  const segments = 20;
+  const budget = MAX_MATERIAL_CHARS - 200; // 留点 overhead 给分隔符
+  const perSeg = Math.floor(budget / segments);
+  const step = Math.floor(s.length / segments);
+  const parts = [];
+  for (let i = 0; i < segments; i++) {
+    const start = i * step;
+    parts.push(s.slice(start, start + perSeg));
+  }
+  return parts.join('\n\n—— 略 ——\n\n');
+}
+
 function buildCardsPrompt(material, targetCount = 30) {
+  material = trimMaterial(material);
   return `你是一位专业的读书笔记整理师。请把下面的素材，转成"卡片书斋"需要的书籍+卡片 JSON 数据。
 
 ## 七种卡片类型及必填字段
