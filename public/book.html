@@ -91,6 +91,30 @@ body {
   font-size: 13px; box-shadow: var(--shadow-lg);
   max-width: 360px;
 }
+
+/* 素材质量诊断横幅：扫描件/垃圾素材预警 */
+.material-warn {
+  max-width: 1200px; margin: 12px auto 0; padding: 12px 18px;
+  border-radius: var(--radius-sm);
+  background: #FEF3C7; color: #92400E;
+  border: 1px solid #F59E0B;
+  font-size: 13px; line-height: 1.6;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+html.dark .material-warn { background: rgba(245,158,11,.14); color: #FCD34D; }
+.material-warn .warn-icon { font-size: 18px; flex-shrink: 0; line-height: 1.2; }
+.material-warn .warn-body { flex: 1; }
+.material-warn .warn-body strong { display: block; margin-bottom: 2px; font-weight: 700; }
+.material-warn button.warn-toggle {
+  background: transparent; border: 1px solid currentColor; color: inherit;
+  padding: 3px 10px; border-radius: 12px; font-size: 11px; cursor: pointer;
+  font-family: inherit; white-space: nowrap;
+}
+.material-warn .warn-detail {
+  margin-top: 6px; font-size: 12px; color: inherit; opacity: .85;
+  font-variant-numeric: tabular-nums;
+}
+.material-warn .warn-detail.hidden { display: none; }
 .extend-bar.hidden { display: none; }
 .extend-bar .spin { display: inline-block; animation: spin 1.2s linear infinite; }
 .extend-bar.done { background: #DCFCE7; color: #15803D; border-color: #22C55E; }
@@ -346,6 +370,8 @@ body {
   </div>
 </section>
 
+<div id="materialWarn"></div>
+
 <div class="toolbar">
   <div class="toolbar-inner" id="toolbarInner"></div>
 </div>
@@ -422,6 +448,32 @@ function renderHero() {
   $('#statsRow').innerHTML = statChips.slice(0, 6).map(c =>
     `<div class="stat-chip"><strong>${c.count}</strong> ${escapeHtml(c.label)}</div>`
   ).join('');
+
+  renderMaterialWarn();
+}
+
+function renderMaterialWarn() {
+  const host = $('#materialWarn');
+  const st = state.book?.materialStats;
+  if (!st || !st.warning) { host.innerHTML = ''; return; }
+  host.innerHTML = `
+    <div class="material-warn">
+      <span class="warn-icon">⚠️</span>
+      <div class="warn-body">
+        <strong>素材质量偏低</strong>
+        ${escapeHtml(st.warning)}
+        <div class="warn-detail hidden" id="warnDetail">
+          总字符 ${st.total} · 有效中文 ${st.zh} · 分隔符 ${st.separators} · 图片占位 ${st.images}
+        </div>
+      </div>
+      <button class="warn-toggle" id="warnToggle">诊断详情</button>
+    </div>
+  `;
+  $('#warnToggle').addEventListener('click', () => {
+    const d = $('#warnDetail');
+    d.classList.toggle('hidden');
+    $('#warnToggle').textContent = d.classList.contains('hidden') ? '诊断详情' : '收起';
+  });
 }
 
 function countByType(cards) {
