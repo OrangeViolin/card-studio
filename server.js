@@ -17,6 +17,23 @@ const multer = require('multer');
 const AdmZip = require('adm-zip');
 const { Agent, fetch: undiciFetch, FormData: UndiciFormData } = require('undici');
 
+// ============================================================
+// 启动前加载 config.json（Electron 会把路径通过 CARD_CONFIG_FILE 传入）
+// ============================================================
+const CARD_CONFIG_FILE = process.env.CARD_CONFIG_FILE || '';
+if (CARD_CONFIG_FILE && fs.existsSync(CARD_CONFIG_FILE)) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CARD_CONFIG_FILE, 'utf-8'));
+    for (const [k, v] of Object.entries(cfg)) {
+      if (v != null && v !== '' && process.env[k] == null) {
+        process.env[k] = String(v);
+      }
+    }
+  } catch (err) {
+    console.error('[config] 读取失败：', err.message);
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3013;
 const DATA_DIR = process.env.CARD_DATA_DIR || path.join(__dirname, 'data');
@@ -40,7 +57,7 @@ if (/^https?:\/\//i.test(PDF_PARSE_URL_RAW)) {
 //   'cli'（默认）→ 本地 Claude CLI（开发机用，需要装 claude 命令）
 //   'mock'       → 离线假数据（跑通 UI 全流程，不依赖任何外部服务）
 //   'http'       → OpenAI 兼容 HTTP（内网部署：LLM_API_URL + LLM_API_KEY + LLM_MODEL）
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || 'cli').toLowerCase();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || 'mock').toLowerCase();
 const LLM_API_URL = process.env.LLM_API_URL || '';
 const LLM_API_KEY = process.env.LLM_API_KEY || '';
 const LLM_MODEL = process.env.LLM_MODEL || 'gpt-4o-mini';
@@ -70,7 +87,14 @@ const CLAUDE_CLI = findClaudeCli();
 // 静态资源 & 数据目录
 // ============================================================
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// 静态资源兼容 Electron 打包：server.js 在 app.asar.unpacked，public 在 app.asar
+const PUBLIC_DIR = (() => {
+  const unpackedGuess = path.join(__dirname, 'public');
+  if (fs.existsSync(unpackedGuess)) return unpackedGuess;
+  const asarGuess = __dirname.replace(/app\.asar\.unpacked/, 'app.asar');
+  return path.join(asarGuess, 'public');
+})();
+app.use(express.static(PUBLIC_DIR));
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const BOOKS_ROOT = path.join(DATA_DIR, 'books');
@@ -103,6 +127,72 @@ app.get('/api/cc/status', (_req, res) => {
     provider: LLM_PROVIDER,
     cli: LLM_PROVIDER === 'cli' ? CLAUDE_CLI : null,
   });
+});
+
+// ============================================================
+// 设置面板（桌面 App 用）
+// ============================================================
+const SETTINGS_KEYS = [
+  'LLM_PROVIDER',
+  'LLM_API_URL',
+  'LLM_API_KEY',
+  'LLM_MODEL',
+  'PDF_PARSE_URL',
+  'PDF2X_API_KEY',
+];
+
+function readSettingsFile() {
+  if (!CARD_CONFIG_FILE || !fs.existsSync(CARD_CONFIG_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(CARD_CONFIG_FILE, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeSettingsFile(obj) {
+  if (!CARD_CONFIG_FILE) throw new Error('CARD_CONFIG_FILE 未配置（仅桌面 App 模式可用）');
+  const dir = path.dirname(CARD_CONFIG_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(CARD_CONFIG_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+}
+
+app.get('/api/settings', (_req, res) => {
+  const saved = readSettingsFile();
+  res.json({
+    configFile: CARD_CONFIG_FILE || null,
+    llmProvider: saved.LLM_PROVIDER || LLM_PROVIDER,
+    llmApiUrl: saved.LLM_API_URL || '',
+    llmModel: saved.LLM_MODEL || LLM_MODEL,
+    pdfParseUrl: saved.PDF_PARSE_URL || '',
+    hasLlmKey: Boolean(saved.LLM_API_KEY),
+    hasPdf2xKey: Boolean(saved.PDF2X_API_KEY),
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  if (!CARD_CONFIG_FILE) {
+    return res.status(400).json({ error: 'settings_unavailable', detail: '仅桌面 App 模式可用' });
+  }
+  try {
+    const prev = readSettingsFile();
+    const next = { ...prev };
+    const body = req.body || {};
+    for (const k of SETTINGS_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(body, k)) {
+        const v = body[k];
+        if (v === '' || v == null) {
+          delete next[k];
+        } else {
+          next[k] = String(v);
+        }
+      }
+    }
+    writeSettingsFile(next);
+    res.json({ ok: true, restartRequired: true });
+  } catch (err) {
+    res.status(500).json({ error: 'write_failed', detail: err.message });
+  }
 });
 
 function callClaude(prompt, taskName = '', timeoutMs = 10 * 60 * 1000) {
@@ -243,23 +333,36 @@ async function callLLMMock(prompt) {
 async function callLLMHttp(prompt, timeoutMs) {
   if (!LLM_API_URL) throw new Error('LLM_PROVIDER=http 需要设置 LLM_API_URL');
   const dispatcher = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
-  const resp = await undiciFetch(LLM_API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(LLM_API_KEY ? { authorization: `Bearer ${LLM_API_KEY}` } : {}),
-    },
-    body: JSON.stringify({
-      model: LLM_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      stream: false,
-    }),
-    dispatcher,
-  });
+  async function requestOnce(maxTokens) {
+    return await undiciFetch(LLM_API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(LLM_API_KEY ? { authorization: `Bearer ${LLM_API_KEY}` } : {}),
+      },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: maxTokens,
+        stream: false,
+      }),
+      dispatcher,
+    });
+  }
+  // 先试 8000，被某些模型拒了自动回退 4000
+  let resp = await requestOnce(8000);
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
-    throw new Error(`LLM HTTP ${resp.status}: ${detail.slice(0, 300)}`);
+    if (resp.status === 400 && /max[_-]?tokens/i.test(detail)) {
+      resp = await requestOnce(4000);
+      if (!resp.ok) {
+        const d2 = await resp.text().catch(() => '');
+        throw new Error(`LLM HTTP ${resp.status}: ${d2.slice(0, 300)}`);
+      }
+    } else {
+      throw new Error(`LLM HTTP ${resp.status}: ${detail.slice(0, 300)}`);
+    }
   }
   const data = await resp.json();
   const text = data?.choices?.[0]?.message?.content
@@ -311,6 +414,7 @@ async function persistBook(bookMeta, cardsArray, coverBuf, coverExt) {
     description: bookMeta.description || '',
     tapeColor: bookMeta.tapeColor || null,
     accentColor: bookMeta.accentColor || null,
+    materialStats: bookMeta.materialStats || null,
     createdAt: now,
     updatedAt: now,
     cardCount: cards.length,
@@ -387,9 +491,47 @@ function trimMaterial(material) {
   return parts.join('\n\n—— 略 ——\n\n');
 }
 
-function buildCardsPrompt(material, targetCount = 30) {
+// 素材质量诊断：扫描 PDF 常只剩分隔符和图片占位符，要让垃圾素材可见
+function analyzeMaterial(md) {
+  const s = String(md || '');
+  const total = s.length;
+  const separators = (s.match(/^-{10,}$/gm) || []).length;
+  const images = (s.match(/!\[.*?\]\(.*?\)/g) || []).length;
+  const zh = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
+  return {
+    total,
+    zh,
+    separators,
+    images,
+    zhRatio: total > 0 ? zh / total : 0,
+    quality: zh < 2000 ? 'low' : zh < 15000 ? 'medium' : 'high',
+    warning: zh < 2000
+      ? `素材有效中文仅 ${zh} 字，疑似扫描 PDF 的 OCR 失败，生成的卡片仅供参考`
+      : null,
+  };
+}
+
+// 根据素材质量估算一次生成的目标张数：约每 300 字一张，上限 80（单次 call 天花板）
+function computeTargetCount(stats) {
+  if (!stats || !stats.zh) return 15;
+  if (stats.quality === 'low') return Math.max(5, Math.floor(stats.zh / 400));
+  return Math.min(80, Math.max(15, Math.floor(stats.zh / 300)));
+}
+
+function buildCardsPrompt(material, targetCount = 30, stats = null) {
   material = trimMaterial(material);
-  return `你是一位专业的读书笔记整理师。请把下面的素材，转成"卡片书斋"需要的书籍+卡片 JSON 数据。
+  const qualityLine = stats
+    ? `- 素材诊断：有效中文 ${stats.zh} 字，质量 ${stats.quality}${stats.warning ? `；⚠️ ${stats.warning}` : ''}`
+    : '';
+  return `你是一位严谨的读书笔记整理师。请把下面的素材，转成"卡片书斋"需要的书籍+卡片 JSON 数据。
+
+## 铁律（违反会被拒稿）
+
+1. **只用素材里明确出现的事实**：不要脑补、不要用外部常识补充。素材没写的就不写。
+2. **禁用软弱词**：不要出现"据说/可能/也许/相传/大概/应该"等不确定词。
+3. **每张卡必须带 source 字段**：从素材里原文引用 20-60 字作为直接依据，能在素材里搜到的真实引文，不是章节名。
+4. **宁缺毋滥**：素材支撑不了目标张数时，返回少一点是合规的；编造/硬凑会被拒稿。
+5. **禁止重复**：同一 term / 人名 / 反常识观点 / 金句只出现一次。
 
 ## 七种卡片类型及必填字段
 
@@ -413,24 +555,24 @@ function buildCardsPrompt(material, targetCount = 30) {
     "accentColor": "#xxxxxx"
   },
   "cards": [
-    { "id": "t1", "type": "term", "title": "...", "fields": { ... }, "source": "章节/出处" }
+    { "id": "t1", "type": "term", "title": "...", "fields": { ... }, "source": "素材原文引用 20-60 字" }
   ]
 }
 
 ## 要求
 
-- **至少生成 ${targetCount} 张卡片**（宁多勿少，素材充分就给到 40-50 张）
-- 每种类型至少 3 张（wild 可选），类型分布均衡
-- 尽量穷尽书中所有核心术语、关键人物、反常识洞察、精华金句、可执行行动、可复用技巧
+- **目标 ${targetCount} 张卡片**（以素材支撑为上限，支撑不够就少给，不要硬凑）
+${qualityLine}
+- 类型分布均衡（素材有料则每种至少 3 张，wild 可选）
 - fields 内容高信息密度、具体、带数字/案例；禁止水句和泛泛描述
-- 每张卡必须独立可读，不依赖其他卡
+- 每张卡独立可读，不依赖其他卡
 - tapeColor 和 accentColor 选择 1 组符合书籍气质的颜色（tapeColor 偏亮、accentColor 偏深）
 - id 用 t1/p1/c1/q1/a1/tk1/w1 这类简短前缀 + 序号
 
 ## 材料
 ${material}
 
-记住：至少 ${targetCount} 张，只输出 JSON，不要任何其它文字、不要 markdown 代码块。
+记住：目标 ${targetCount} 张（素材不支撑就少给），每张必须带 source 真实引文，只输出 JSON，不要任何其它文字、不要 markdown 代码块。
 **重要：字段值里不要出现字面量英文双引号 " — 需要引用人话时请使用中文引号「」或 『』。**`;
 }
 
@@ -448,6 +590,141 @@ function safeJsonParse(text) {
     try { return JSON.parse(t); } catch (e) { lastErr = e; }
   }
   throw lastErr;
+}
+
+// ============================================================
+// 分块 & 去重 & 统一生成调度器
+// ============================================================
+
+// 按 H2 → H3 → 硬切 三级策略切分长素材
+function splitMaterial(md, maxChunkChars = 25000) {
+  const s = String(md || '');
+  if (s.length <= maxChunkChars) return [s];
+
+  let parts = splitByHeading(s, /^##\s+/);
+  // 合并过小碎片（< maxChunkChars / 4）到相邻块，避免浪费 LLM 调用
+  parts = mergeSmallChunks(parts, Math.floor(maxChunkChars / 4), maxChunkChars);
+  if (parts.every(p => p.length <= maxChunkChars)) return parts;
+
+  parts = parts.flatMap(p => p.length <= maxChunkChars ? [p] : splitByHeading(p, /^###\s+/));
+  parts = mergeSmallChunks(parts, Math.floor(maxChunkChars / 4), maxChunkChars);
+  if (parts.every(p => p.length <= maxChunkChars)) return parts;
+
+  return parts.flatMap(p => p.length <= maxChunkChars ? [p] : hardSplit(p, maxChunkChars));
+}
+
+function splitByHeading(s, headingRe) {
+  const lines = s.split('\n');
+  const parts = [];
+  let buf = [];
+  for (const l of lines) {
+    if (headingRe.test(l) && buf.length > 0 && buf.join('\n').trim()) {
+      parts.push(buf.join('\n'));
+      buf = [l];
+    } else {
+      buf.push(l);
+    }
+  }
+  if (buf.length) parts.push(buf.join('\n'));
+  return parts.filter(p => p.trim());
+}
+
+function mergeSmallChunks(parts, minSize, maxSize) {
+  const out = [];
+  let cur = '';
+  for (const p of parts) {
+    if (!cur) { cur = p; continue; }
+    if (cur.length < minSize && cur.length + p.length <= maxSize) {
+      cur = cur + '\n\n' + p;
+    } else {
+      out.push(cur);
+      cur = p;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function hardSplit(s, maxChars) {
+  const parts = [];
+  for (let i = 0; i < s.length; i += maxChars) parts.push(s.slice(i, i + maxChars));
+  return parts;
+}
+
+// 去重：同 type + 同 title 前 20 字 视为重复，保留 fields 更丰富的那张
+function dedupeCards(cards) {
+  const best = new Map();
+  for (const c of cards) {
+    const title = String(c.title || '').trim().slice(0, 20);
+    const key = `${c.type || 'wild'}::${title}`;
+    const size = JSON.stringify(c.fields || {}).length;
+    const prev = best.get(key);
+    if (!prev || size > prev.size) best.set(key, { card: c, size });
+  }
+  // 保持首次出现顺序
+  const seen = new Set();
+  const order = [];
+  for (const c of cards) {
+    const title = String(c.title || '').trim().slice(0, 20);
+    const key = `${c.type || 'wild'}::${title}`;
+    if (!seen.has(key)) { seen.add(key); order.push(key); }
+  }
+  return order.map(k => best.get(k).card);
+}
+
+// 核心：一次 LLM 调用 → { book, cards }
+async function callLLMForCards(material, targetCount, stats, taskLabel, debugWrite) {
+  const raw = await callClaude(buildCardsPrompt(material, targetCount, stats), taskLabel);
+  if (debugWrite) {
+    try { debugWrite(raw); } catch {}
+  }
+  const cleaned = stripJsonFence(raw);
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) {
+    const preview = (raw || '').slice(0, 400).replace(/\s+/g, ' ');
+    throw new Error(`LLM 返回里没有 JSON 对象。前 400 字：${preview || '(空)'}`);
+  }
+  const parsed = safeJsonParse(match[0]);
+  return {
+    book: parsed.book || {},
+    cards: Array.isArray(parsed.cards) ? parsed.cards : [],
+  };
+}
+
+// 调度器：短素材一次生成；长素材（zh ≥ 15000）按 H2/H3 分块串行
+async function generateCardsForMaterial(material, stats, taskLabel, onProgress, debugWrite) {
+  if (stats.zh < 15000) {
+    const target = computeTargetCount(stats);
+    onProgress?.(`Claude 生成约 ${target} 张卡片（约 2-3 分钟）…`);
+    return await callLLMForCards(material, target, stats, taskLabel, debugWrite);
+  }
+  const chunks = splitMaterial(material, 25000);
+  let book = null;
+  const all = [];
+  let failed = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const cst = analyzeMaterial(chunks[i]);
+    const t = Math.min(40, Math.max(20, Math.floor(cst.zh / 500)));
+    onProgress?.(`分块 ${i + 1}/${chunks.length} 生成中…（累计 ${all.length} 张，目标 ${t}）`);
+    try {
+      const r = await callLLMForCards(
+        chunks[i], t, cst,
+        `${taskLabel}[${i + 1}/${chunks.length}]`,
+        debugWrite ? (raw) => debugWrite(raw, i + 1) : null,
+      );
+      if (!book && r.book && r.book.title) book = r.book;
+      if (Array.isArray(r.cards)) all.push(...r.cards);
+    } catch (e) {
+      failed++;
+      console.error(`[chunk ${i + 1}/${chunks.length}]`, e.message);
+    }
+  }
+  if (!all.length) {
+    throw new Error(`全部 ${chunks.length} 块生成失败（失败 ${failed} 块）`);
+  }
+  const deduped = dedupeCards(all);
+  onProgress?.(`分块合并：原始 ${all.length} 张 → 去重后 ${deduped.length} 张${failed ? ` · 失败 ${failed} 块` : ''}`);
+  return { book: book || {}, cards: deduped };
 }
 
 // ============================================================
@@ -520,17 +797,15 @@ async function runGenerateJob(jobId, extractDir, originalName) {
     const material = collectSkillMaterials(extractDir);
     if (!material.trim()) throw new Error('未找到 .md/.txt 素材');
 
-    updateBookJob(jobId, { progress: 'Claude 正在生成卡片（约 2-3 分钟）…' });
-    const raw = await callClaude(buildCardsPrompt(material, 30), `生成卡片:${originalName}`);
-    const cleaned = stripJsonFence(raw);
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Claude 返回格式错误，未找到 JSON');
-    const parsed = safeJsonParse(match[0]);
-
-    const bookMeta = parsed.book || {};
-    const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
+    const stats = analyzeMaterial(material);
+    updateBookJob(jobId, { progress: `素材 ${stats.zh} 中文字（${stats.quality}），准备生成…` });
+    const { book: bookMeta, cards } = await generateCardsForMaterial(
+      material, stats, `生成卡片:${originalName}`,
+      (msg) => updateBookJob(jobId, { progress: msg }),
+    );
     if (!bookMeta.title) bookMeta.title = path.basename(originalName).replace(/\.(zip|md|txt|pdf)$/i, '');
     if (!cards.length) throw new Error('Claude 未生成任何卡片');
+    bookMeta.materialStats = stats;
 
     updateBookJob(jobId, { progress: '保存到书架…' });
     const result = await persistBook(bookMeta, cards, null, null);
@@ -788,25 +1063,22 @@ async function runPdfJob(jobId, pdfPath, originalName, apiKey, mode) {
       );
     }
 
-    updateBookJob(jobId, { progress: 'Claude 正在生成卡片（约 2-3 分钟）…' });
-    const raw = await callClaude(buildCardsPrompt(markdown, 30), `PDF 生成:${originalName}`);
-    // 把 LLM 原始返回落盘，方便排障
-    try {
-      const debugDir = path.join(DATA_DIR, 'llm_debug');
-      if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
-      fs.writeFileSync(path.join(debugDir, `${jobId}.txt`), raw || '(empty)', 'utf-8');
-    } catch {}
-    const cleaned = stripJsonFence(raw);
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) {
-      const preview = (raw || '').slice(0, 400).replace(/\s+/g, ' ');
-      throw new Error(`Claude 返回里没有 JSON 对象。前 400 字：${preview || '(空)'}（完整输出在 data/llm_debug/${jobId}.txt）`);
-    }
-    const parsed = safeJsonParse(match[0]);
-    const bookMeta = parsed.book || {};
-    const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
+    const stats = analyzeMaterial(markdown);
+    updateBookJob(jobId, { progress: `素材 ${stats.zh} 中文字（${stats.quality}），准备生成…` });
+    const debugDir = path.join(DATA_DIR, 'llm_debug');
+    try { if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true }); } catch {}
+    const debugWrite = (raw, chunkIdx) => {
+      const name = chunkIdx ? `${jobId}.chunk${chunkIdx}.txt` : `${jobId}.txt`;
+      try { fs.writeFileSync(path.join(debugDir, name), raw || '(empty)', 'utf-8'); } catch {}
+    };
+    const { book: bookMeta, cards } = await generateCardsForMaterial(
+      markdown, stats, `PDF 生成:${originalName}`,
+      (msg) => updateBookJob(jobId, { progress: msg }),
+      debugWrite,
+    );
     if (!bookMeta.title) bookMeta.title = path.basename(originalName).replace(/\.pdf$/i, '');
     if (!cards.length) throw new Error('Claude 未生成任何卡片');
+    bookMeta.materialStats = stats;
 
     updateBookJob(jobId, { progress: '保存到书架…' });
     const result = await persistBook(bookMeta, cards, null, null);
@@ -859,16 +1131,15 @@ app.post('/api/books/upload-pdf', booksUpload.single('pdfFile'), async (req, res
 async function runMaterialJob(jobId, material, fallbackTitle, progressHint = 'Claude 正在生成卡片（约 2-3 分钟）…') {
   try {
     if (!material || !material.trim()) throw new Error('素材为空');
+    const stats = analyzeMaterial(material);
     updateBookJob(jobId, { status: 'running', progress: progressHint });
-    const raw = await callClaude(buildCardsPrompt(material, 30), `生成卡片:${fallbackTitle}`);
-    const cleaned = stripJsonFence(raw);
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Claude 返回格式错误，未找到 JSON');
-    const parsed = safeJsonParse(match[0]);
-    const bookMeta = parsed.book || {};
-    const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
+    const { book: bookMeta, cards } = await generateCardsForMaterial(
+      material, stats, `生成卡片:${fallbackTitle}`,
+      (msg) => updateBookJob(jobId, { progress: msg }),
+    );
     if (!bookMeta.title) bookMeta.title = fallbackTitle;
     if (!cards.length) throw new Error('Claude 未生成任何卡片');
+    bookMeta.materialStats = stats;
 
     updateBookJob(jobId, { progress: '保存到书架…' });
     const result = await persistBook(bookMeta, cards, null, null);
