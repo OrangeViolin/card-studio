@@ -16,6 +16,7 @@
   </div>
   <div class="topbar-right">
     <button id="apiKeyBtn" class="icon-btn" title="设置 pdf2x.cn API Key（PDF 上传需要）">🔑</button>
+    <button id="settingsBtn" class="icon-btn" title="LLM / PDF 设置（桌面版）">⚙</button>
     <button id="themeBtn" class="icon-btn" title="切换主题">🎨</button>
     <button id="uploadBtn" class="primary-btn">
       <span>＋</span> 上传一本书
@@ -197,6 +198,53 @@ cards.json 格式：
       <button id="apiKeySave" class="primary-btn">保存</button>
     </div>
     <div id="apiKeyStatus" class="upload-status"></div>
+  </div>
+</div>
+
+<!-- 设置弹窗（桌面版 LLM/PDF 配置） -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-mask" data-close-settings></div>
+  <div class="modal-card">
+    <button class="modal-close" data-close-settings>&times;</button>
+    <h3>⚙ 设置（仅桌面版）</h3>
+    <p class="modal-desc">保存后需要重启 App 生效。配置写入用户目录下的 config.json，不会上传。</p>
+
+    <div id="settingsUnavailable" class="upload-status hidden" style="color:#c44536">
+      当前不是桌面 App 模式，设置面板不可用。请通过 <code>npm run electron</code> 或打包后的 Card Studio.app 使用。
+    </div>
+
+    <div id="settingsForm">
+      <div class="key-input-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <label style="font-size:13px;color:#666">LLM Provider</label>
+        <select id="setLlmProvider" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px">
+          <option value="mock">mock（离线假数据，零依赖）</option>
+          <option value="http">http（OpenAI 兼容：DeepSeek / Kimi / OpenAI…）</option>
+        </select>
+
+        <label style="font-size:13px;color:#666">LLM API URL</label>
+        <input type="text" id="setLlmApiUrl" placeholder="https://api.deepseek.com/v1/chat/completions" autocomplete="off" spellcheck="false">
+
+        <label style="font-size:13px;color:#666">LLM API Key</label>
+        <input type="password" id="setLlmApiKey" placeholder="留空则保持原 Key 不变；填 '-' 清除" autocomplete="off" spellcheck="false">
+
+        <label style="font-size:13px;color:#666">LLM Model</label>
+        <input type="text" id="setLlmModel" placeholder="deepseek-chat / gpt-4o-mini / moonshot-v1-8k" autocomplete="off" spellcheck="false">
+
+        <label style="font-size:13px;color:#666">PDF 解析方式</label>
+        <select id="setPdfParseUrl" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px">
+          <option value="">local（本地 pdf-parse，离线）</option>
+          <option value="pdf2x">pdf2x（用 pdf2x.cn，需上面 🔑 的 Key）</option>
+        </select>
+
+        <label style="font-size:13px;color:#666">PDF2X API Key（选 pdf2x 时需要）</label>
+        <input type="password" id="setPdf2xKey" placeholder="留空则保持原 Key 不变；填 '-' 清除" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="key-actions" style="margin-top:16px">
+        <button class="ghost-btn" data-close-settings>取消</button>
+        <button id="settingsSave" class="primary-btn">保存并提示重启</button>
+      </div>
+    </div>
+    <div id="settingsStatus" class="upload-status"></div>
   </div>
 </div>
 

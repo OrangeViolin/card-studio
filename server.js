@@ -39,10 +39,11 @@ const PORT = process.env.PORT || 3013;
 const DATA_DIR = process.env.CARD_DATA_DIR || path.join(__dirname, 'data');
 const PDF2X_ENDPOINT = process.env.PDF2X_ENDPOINT || 'https://insightdoc.memect.cn';
 
-// PDF 解析三选一（按 PDF_PARSE_URL 值判断）：
-//   空 / 'local' / 未设  → 本地 pdf-parse（默认，离线可用）
+// PDF 解析四选一（按 PDF_PARSE_URL 值判断）：
+//   空 / 'local' / 未设  → 本地 pdf-parse（默认，离线可用，扫描件效果差）
 //   http(s)://xxx        → V1 远程（如内网 http://192.168.41.107:7004/pdf_parse）
-//   'pdf2x'              → pdf2x.cn（走 PDF2X_ENDPOINT + PDF2X_API_KEY）
+//   'pdf2x'              → pdf2x.cn（走 PDF2X_ENDPOINT + PDF2X_API_KEY，扫描件默认不 OCR）
+//   'local-ppx'          → 本地 memect-ppx CLI（强制 --ocr yes，扫描件也能出正文，慢）
 const PDF_PARSE_URL_RAW = (process.env.PDF_PARSE_URL ?? '').trim();
 let PDF_PARSE_MODE = 'local';
 let PDF_PARSE_URL = '';
@@ -51,7 +52,11 @@ if (/^https?:\/\//i.test(PDF_PARSE_URL_RAW)) {
   PDF_PARSE_URL = PDF_PARSE_URL_RAW;
 } else if (PDF_PARSE_URL_RAW.toLowerCase() === 'pdf2x') {
   PDF_PARSE_MODE = 'pdf2x';
+} else if (PDF_PARSE_URL_RAW.toLowerCase() === 'local-ppx') {
+  PDF_PARSE_MODE = 'local-ppx';
 }
+// 本地 ppx 可执行文件（默认：项目下的 .ppx-venv）
+const PPX_BIN = process.env.PPX_BIN || path.join(__dirname, '.ppx-venv', 'bin', 'ppx');
 
 // LLM provider 三选一（按 LLM_PROVIDER 判断）：
 //   'cli'（默认）→ 本地 Claude CLI（开发机用，需要装 claude 命令）
@@ -997,6 +1002,43 @@ async function pdfToMarkdownV1(pdfPath) {
   throw new Error('V1 轮询超时（30 分钟）');
 }
 
+// 本地 ppx：spawn memect-ppx CLI，强制 --ocr yes，输出 doc.md
+// 可选 onProgress 回调，用于把子进程 stdout 的阶段信息透传给 job.progress
+async function pdfToMarkdownLocalPPX(pdfPath, onProgress) {
+  const { spawn } = require('child_process');
+  if (!fs.existsSync(PPX_BIN)) {
+    throw new Error(`ppx 可执行文件不存在：${PPX_BIN}。安装：uv venv .ppx-venv --python 3.12 && uv pip install --python .ppx-venv/bin/python memect-ppx onnxruntime opencv-contrib-python`);
+  }
+  const outDir = path.join(DATA_DIR, 'ppx_out', `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  fs.mkdirSync(outDir, { recursive: true });
+  const args = ['parse', pdfPath, '--ocr', 'yes', '--md', '-o', outDir, '--cpu'];
+  await new Promise((resolve, reject) => {
+    const p = spawn(PPX_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let lastLine = '';
+    const onData = (buf) => {
+      const s = buf.toString();
+      const lines = s.split(/\r?\n/).filter(Boolean);
+      if (lines.length) lastLine = lines[lines.length - 1];
+      // 从 ppx 日志里抓阶段关键字
+      const m = s.match(/(layout|ocr|formula|table|parser|pdf2image)[^\n]{0,80}/i);
+      if (m && onProgress) {
+        try { onProgress(`ppx 本地 OCR：${m[0].slice(0, 80)}`); } catch {}
+      }
+    };
+    p.stdout.on('data', onData);
+    p.stderr.on('data', onData);
+    p.on('error', reject);
+    p.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ppx parse 退出码 ${code}：${lastLine.slice(0, 200)}`));
+    });
+  });
+  const mdPath = path.join(outDir, 'doc.md');
+  if (!fs.existsSync(mdPath)) throw new Error(`ppx 未生成 doc.md：${mdPath}`);
+  const markdown = fs.readFileSync(mdPath, 'utf-8');
+  return { markdown };
+}
+
 async function pdfToMarkdown(pdfPath, apiKey) {
   const buf = fs.readFileSync(pdfPath);
   const form = new UndiciFormData();
@@ -1044,15 +1086,18 @@ async function pdfToMarkdown(pdfPath, apiKey) {
 async function runPdfJob(jobId, pdfPath, originalName, apiKey, mode) {
   try {
     const progressMsg = {
-      local:  'PDF 转文本（本地 pdf-parse，约 5-15 秒）…',
-      v1:     'PDF 转 Markdown（自建 parse 服务处理中，可能需要几分钟）…',
-      pdf2x:  'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…',
+      local:        'PDF 转文本（本地 pdf-parse，约 5-15 秒）…',
+      v1:           'PDF 转 Markdown（自建 parse 服务处理中，可能需要几分钟）…',
+      pdf2x:        'PDF 转 Markdown（pdf2x.cn 处理中，约 15-60 秒）…',
+      'local-ppx':  'PDF 转 Markdown（本地 memect-ppx + OCR，扫描件也能抽，慢，可能要几分钟到几十分钟）…',
     }[mode] || 'PDF 处理中…';
     updateBookJob(jobId, { status: 'running', progress: progressMsg });
+    const onPpxProgress = (msg) => updateBookJob(jobId, { progress: msg });
     const { markdown } =
-      mode === 'local' ? await pdfToMarkdownLocal(pdfPath) :
-      mode === 'v1'    ? await pdfToMarkdownV1(pdfPath) :
-                         await pdfToMarkdown(pdfPath, apiKey);
+      mode === 'local'     ? await pdfToMarkdownLocal(pdfPath) :
+      mode === 'v1'        ? await pdfToMarkdownV1(pdfPath) :
+      mode === 'local-ppx' ? await pdfToMarkdownLocalPPX(pdfPath, onPpxProgress) :
+                             await pdfToMarkdown(pdfPath, apiKey);
     if (!markdown || !markdown.trim()) throw new Error(`PDF 解析（${mode}）返回空内容`);
     // 统一护栏：去掉页码/空白后实际字符数过少 = 扫描件或空 PDF，不要喂给 Claude（它会幻觉）
     const realChars = stripPageMarkers(markdown).length;
@@ -1289,9 +1334,10 @@ app.listen(PORT, () => {
   console.log(`   LLM:        ${llmInfo}`);
   console.log(`   Data dir:   ${DATA_DIR}`);
   const pdfInfo = {
-    local: 'local (pdf-parse, 离线)',
-    v1:    `v1 (${PDF_PARSE_URL})`,
-    pdf2x: `pdf2x.cn (${PDF2X_ENDPOINT})`,
+    local:       'local (pdf-parse, 离线)',
+    v1:          `v1 (${PDF_PARSE_URL})`,
+    pdf2x:       `pdf2x.cn (${PDF2X_ENDPOINT})`,
+    'local-ppx': `local-ppx (${PPX_BIN})`,
   }[PDF_PARSE_MODE];
   console.log(`   PDF parse:  ${pdfInfo}`);
 

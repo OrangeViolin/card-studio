@@ -116,9 +116,9 @@ a.icon-btn { width: auto; padding: 0 14px; font-size: 14px; gap: 4px; }
   position: absolute; height: 22px; border-radius: 2px;
   opacity: .85;
 }
-.tape-a { left: 6%;  width: 120px; background: var(--tape-a); transform: rotate(-3deg); top: -6px; }
-.tape-b { left: 44%; width: 80px;  background: var(--tape-b); transform: rotate(2deg); top: -4px; }
-.tape-c { right: 10%; width: 100px; background: var(--tape-c); transform: rotate(-2deg); top: -8px; }
+.tape.tape-a { left: 6%;  width: 120px; background: var(--tape-a); transform: rotate(-3deg); top: -6px; }
+.tape.tape-b { left: 44%; width: 80px;  background: var(--tape-b); transform: rotate(2deg); top: -4px; }
+.tape.tape-c { right: 10%; width: 100px; background: var(--tape-c); transform: rotate(-2deg); top: -8px; }
 
 .shelf-intro { margin: 24px 0 20px; }
 .shelf-intro h2 {
@@ -132,10 +132,13 @@ a.icon-btn { width: auto; padding: 0 14px; font-size: 14px; gap: 4px; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 28px 22px;
+  align-items: start;
 }
 
 .book-card {
   position: relative;
+  width: 100%;           /* 修 flex-column 在 grid 里不 stretch 的 bug */
+  min-width: 0;
   background: transparent;
   border: none;
   padding: 0;
@@ -153,15 +156,15 @@ a.icon-btn { width: auto; padding: 0 14px; font-size: 14px; gap: 4px; }
 }
 
 .book-card .book-tape {
-  position: absolute; top: -10px; left: 50%; transform: translateX(-50%) rotate(-3deg);
+  position: absolute; top: -8px; left: 50%; transform: translateX(-50%) rotate(-2deg);
   width: 72px; height: 18px;
   background: var(--tape-a); opacity: .9;
   border-radius: 2px;
   box-shadow: 0 1px 3px rgba(0,0,0,.12);
   z-index: 2;
 }
-.book-card.tape-b .book-tape { background: var(--tape-b); transform: translateX(-50%) rotate(4deg); }
-.book-card.tape-c .book-tape { background: var(--tape-c); transform: translateX(-50%) rotate(-5deg); }
+.book-card.tape-b .book-tape { background: var(--tape-b); transform: translateX(-50%) rotate(-2deg); }
+.book-card.tape-c .book-tape { background: var(--tape-c); transform: translateX(-50%) rotate(-2deg); }
 
 /* ===== 程序化封面 ===== */
 .book-cover {
@@ -219,7 +222,7 @@ a.icon-btn { width: auto; padding: 0 14px; font-size: 14px; gap: 4px; }
 }
 .cover-title {
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
-  font-size: clamp(18px, 2.6vw, 22px);
+  font-size: 20px;
   font-weight: 800;
   letter-spacing: .02em;
   line-height: 1.25;

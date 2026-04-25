@@ -455,6 +455,83 @@ $('#apiKeyClear').addEventListener('click', () => {
   setKeyStatus('info', '已清除本地 Key');
 });
 
+// ===== LLM / PDF 设置（桌面版） =====
+const settingsModal = $('#settingsModal');
+const settingsStatus = $('#settingsStatus');
+function setSettingsStatus(kind, text) {
+  settingsStatus.className = 'upload-status ' + kind;
+  settingsStatus.textContent = text;
+}
+
+async function openSettings() {
+  setSettingsStatus('', '');
+  settingsModal.classList.remove('hidden');
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    const unavailable = $('#settingsUnavailable');
+    const form = $('#settingsForm');
+    if (!data.configFile) {
+      unavailable.classList.remove('hidden');
+      form.style.opacity = 0.4;
+      form.style.pointerEvents = 'none';
+      return;
+    }
+    unavailable.classList.add('hidden');
+    form.style.opacity = 1;
+    form.style.pointerEvents = '';
+    $('#setLlmProvider').value = data.llmProvider === 'http' ? 'http' : 'mock';
+    $('#setLlmApiUrl').value = data.llmApiUrl || '';
+    $('#setLlmApiKey').value = '';
+    $('#setLlmApiKey').placeholder = data.hasLlmKey
+      ? '已保存（留空不变，填 - 清除）'
+      : '留空则保持原 Key 不变；填 - 清除';
+    $('#setLlmModel').value = data.llmModel || '';
+    $('#setPdfParseUrl').value = data.pdfParseUrl === 'pdf2x' ? 'pdf2x' : '';
+    $('#setPdf2xKey').value = '';
+    $('#setPdf2xKey').placeholder = data.hasPdf2xKey
+      ? '已保存（留空不变，填 - 清除）'
+      : '留空则保持原 Key 不变；填 - 清除';
+  } catch (err) {
+    setSettingsStatus('error', '❌ 加载失败：' + err.message);
+  }
+}
+
+$('#settingsBtn').addEventListener('click', openSettings);
+$$('[data-close-settings]').forEach(el => el.addEventListener('click', () => {
+  settingsModal.classList.add('hidden');
+}));
+
+$('#settingsSave').addEventListener('click', async () => {
+  const payload = {
+    LLM_PROVIDER: $('#setLlmProvider').value,
+    LLM_API_URL: $('#setLlmApiUrl').value.trim(),
+    LLM_MODEL: $('#setLlmModel').value.trim(),
+    PDF_PARSE_URL: $('#setPdfParseUrl').value,
+  };
+  const llmKey = $('#setLlmApiKey').value;
+  if (llmKey === '-') payload.LLM_API_KEY = '';
+  else if (llmKey) payload.LLM_API_KEY = llmKey;
+
+  const pdfKey = $('#setPdf2xKey').value;
+  if (pdfKey === '-') payload.PDF2X_API_KEY = '';
+  else if (pdfKey) payload.PDF2X_API_KEY = pdfKey;
+
+  setSettingsStatus('info', '保存中…');
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.error || '保存失败');
+    setSettingsStatus('success', '✅ 已保存。请 Cmd+Q 退出 App 后重新打开生效。');
+  } catch (err) {
+    setSettingsStatus('error', '❌ ' + err.message);
+  }
+});
+
 async function pollGenerateJob(jobId) {
   setStatus('info', '🧠 CC 正在读这本书并生成卡片（约 1-3 分钟）…');
   const started = Date.now();

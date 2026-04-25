@@ -1,10 +1,20 @@
 node_modules/
 data/
 *.log
+logs/
+llm_debug/
 .DS_Store
 .env
 .env.local
 .vscode/
 .idea/
 dist/
-build/
+
+# 本地 OCR 用的 Python venv（约 1.2G，按需自行创建）
+.ppx-venv/
+# build/ 下保留 icon.icns（electron-builder 需要），其他忽略
+build/*
+!build/icon.icns
+
+# Electron 开发模式会写到这里；打包版写入 userData，不进仓库
+config.json

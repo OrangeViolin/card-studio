@@ -12,12 +12,36 @@
 |------|------|
 | 书架视图 | 一本书一个格子，封面 + 标题 + 作者 + 卡片数 |
 | 文件上传 | PDF / Markdown / TXT / ZIP / 整个文件夹（拖进去就行） |
-| PDF 解析 | 走 `pdf2x.cn` 或**自建 parse 服务**（环境变量切换） |
+| PDF 解析 | 四选一：本地 `pdf-parse` / 自建 V1 / `pdf2x.cn` / **本地 OCR（扫描件友好）** |
 | 网页链接 | 贴一个 URL，服务器抓正文 → 生成卡片 |
 | 粘贴文本 | 文章 / 笔记 / 聊天记录，任何长文直接粘进来 |
 | 订阅导入 | 从远端 URL 拉 `cards.json` 或 `book.zip`，一键入库 |
 | 七种卡片 | term · people · counter · quote · action · tech · wild，Claude CLI 生成 |
 | 本地数据 | 全部写 `./data`，不上云，不打点 |
+
+---
+
+## 桌面版（macOS）
+
+把 Card Studio 当 App 用。数据存在 `~/Library/Application Support/Card Studio/`，跟开发目录完全隔离。
+
+```bash
+# 装依赖（包含 electron / electron-builder）
+npm install
+
+# 开发模式：直接拉起 Electron 窗口 + 内置后端
+npm run electron
+
+# 打包 ad-hoc 签名的 DMG（Apple Silicon）
+npm run pack
+# 产出：dist/Card Studio-0.1.0-arm64.dmg
+```
+
+**首次打开**：macOS 会拦截未签名 App。右键 Card Studio.app → 打开 → 同意 → 下次就不拦了。朋友装的时候同样这么操作。
+
+**LLM 配置**：点窗口右上角 ⚙ 设置，选 `http`，填 DeepSeek/Kimi/OpenAI 的 API URL + Key + Model，保存后 Cmd+Q 重开一次 App 即可生效。不配置默认走 `mock`（离线假数据），能跑通 UI 但卡片是样板。
+
+**数据在哪**：`~/Library/Application Support/Card Studio/data/`，首次打开会把项目里的 5 本种子书拷进去。
 
 ---
 
@@ -27,11 +51,17 @@
 # 1. 装依赖（需要 Node ≥ 18）
 npm install
 
-# 2. 启动（默认 http://localhost:3013）
+# 2. 拷贝配置模板，填上自己的 LLM key
+cp .env.example .env
+# 然后编辑 .env，把 LLM_API_KEY 换成你自己的
+
+# 3. 启动（默认 http://localhost:3013）
 npm start
 ```
 
-首次启动会自动创建 `data/books` 和 `data/book_upload` 目录。
+首次启动会自动创建 `data/books` 和 `data/book_upload` 目录。打开浏览器访问 [http://localhost:3013](http://localhost:3013) 就能看到书架。
+
+> ⚠️ `.env` 已加入 `.gitignore`，不会被提交。**永远不要把 API key 推到公开仓库。**
 
 ### 零依赖试跑
 
@@ -64,6 +94,7 @@ mock 模式会把素材切成占位卡片，四个 tab（文件/网页/粘贴/�
 | `PDF_PARSE_URL` | `` (空 = 本地) | PDF 解析路径。见下表 |
 | `PDF2X_ENDPOINT` | `https://insightdoc.memect.cn` | pdf2x.cn 网关（`PDF_PARSE_URL=pdf2x` 时生效） |
 | `PDF2X_API_KEY` | —— | 仅 pdf2x.cn 路径需要 |
+| `PPX_BIN` | `./.ppx-venv/bin/ppx` | `PDF_PARSE_URL=local-ppx` 时调用的 ppx 可执行文件 |
 
 ### LLM provider
 
@@ -73,13 +104,14 @@ mock 模式会把素材切成占位卡片，四个 tab（文件/网页/粘贴/�
 | `mock` | **离线占位** | 只想跑通 UI、没 LLM 也要演示 |
 | `http` | **OpenAI 兼容 HTTP** | 内网部署，配 `LLM_API_URL` + `LLM_API_KEY` + `LLM_MODEL` |
 
-### PDF 解析三选一
+### PDF 解析四选一
 
 | `PDF_PARSE_URL` 的值 | 走哪条路 | 何时用 |
 |---------------------|---------|--------|
 | 空 / 未设 | **本地 `pdf-parse`** | 开发机离线用，文本型 PDF 效果好，扫描件会失败 |
 | `http://...` 的完整 URL | **V1 远程**（对齐 `parse_pdf_util.py`） | 内网 / 生产环境，走自建解析服务，最好 |
 | `pdf2x` | **pdf2x.cn** | 公网环境但没有自建服务，有免费额度，要 `PDF2X_API_KEY` |
+| `local-ppx` | **本地 [`memect-ppx`](https://pypi.org/project/memect-ppx/) + OCR** | 扫描件 / 超星 PDG 等无文本层 PDF，离线可用。需先建 venv，见下 |
 
 启动时会在日志里打出当前 mode：
 
@@ -87,7 +119,29 @@ mock 模式会把素材切成占位卡片，四个 tab（文件/网页/粘贴/�
 PDF parse:  local (pdf-parse, 离线)
 PDF parse:  v1 (http://192.168.41.107:7004/pdf_parse)
 PDF parse:  pdf2x.cn (https://insightdoc.memect.cn)
+PDF parse:  local-ppx (/abs/path/to/.ppx-venv/bin/ppx)
 ```
+
+#### 本地 OCR（`local-ppx` 模式）安装
+
+memect-ppx 是 pdf2x.cn 的开源底层引擎，自带 layout/OCR/表格/公式识别，能把扫描件吐成结构化 markdown。但模型权重和依赖加起来约 1.2G，所以默认不装。
+
+```bash
+# 需要 uv（推荐）和 Python ≥ 3.12
+brew install uv  # 或 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+cd card-studio
+uv venv .ppx-venv --python 3.12
+uv pip install --python .ppx-venv/bin/python memect-ppx onnxruntime opencv-contrib-python
+
+# 验证
+.ppx-venv/bin/ppx --help
+
+# 启动 server
+PDF_PARSE_URL=local-ppx npm start
+```
+
+CPU 推理速度参考：30KB 发票 PDF 约 2-3 分钟首跑（之后模型缓存命中会更快），10MB 中文扫描书可能要 30 分钟到 1 小时。如果有 NVIDIA GPU，可装 `onnxruntime-gpu` 提速，但 macOS 走 CPU 即可。
 
 ---
 

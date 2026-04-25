@@ -2,10 +2,12 @@
   "name": "card-studio",
   "version": "0.1.0",
   "description": "卡片书斋 · 把你读过的金句、写过的段落，变成可浏览的知识卡片和打字练习",
-  "main": "server.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "electron": "electron .",
+    "pack": "electron-builder --mac --arm64"
   },
   "keywords": [
     "reading",
@@ -25,11 +27,73 @@
     "pdf-parse": "^2.4.5",
     "undici": "^8.1.0"
   },
+  "devDependencies": {
+    "electron": "^38.8.6",
+    "electron-builder": "^25.0.0"
+  },
   "engines": {
     "node": ">=18"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/OrangeViolin/card-studio.git"
+  },
+  "build": {
+    "appId": "com.cardstudio.app",
+    "productName": "Card Studio",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "server.js",
+      "electron/**/*",
+      "public/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!data/**",
+      "!.env",
+      "!llm_debug/**",
+      "!samples/**",
+      "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "data",
+        "to": "seed-data"
+      }
+    ],
+    "asarUnpack": [
+      "server.js",
+      "node_modules/pdf-parse/**/*"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Card Studio ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
   }
 }
